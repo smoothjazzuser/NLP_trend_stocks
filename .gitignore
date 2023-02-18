@@ -9,6 +9,10 @@ __pycache__/
 # Distribution / packaging
 .Python
 .txt
+Stocks/*
+Stocks/
+data/*
+stocks/*
 .zip
 /data/*
 build/
