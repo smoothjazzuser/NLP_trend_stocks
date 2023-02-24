@@ -8,6 +8,7 @@ from yahooquery import Ticker
 import timeit
 import time
 import datetime
+import re
 
 class aquire_stock_search_terms():
     """A work-in-progress. Goal is to take stock ticker symbols and return a list of search terms for NLP web scraping. Officers, affiliated companies, company name, etc."""
@@ -161,14 +162,57 @@ class aquire_stock_search_terms():
             if type(name) == str:
                 self.missed.append(name)
     
+    def get_year_first_traded (self, index):
+        if type(index) == int:
+            if 'firstTradeDateEpochUtc' in self.yh_tickers[index]:
+                return self.yh_tickers[index]['firstTradeDateEpochUtc']
+        return ""
+
+    def get_year_founded(self, index):
+        """Return the year the company was founded. If not found, return an empty string. Has a chance of returning the wrong year."""
+        if type(index) == int:
+            if "longBusinessSummary" in self.yh_tickers[index]:
+                # check if "in ^d {4}$"
+                summary = self.yh_tickers[index]["longBusinessSummary"]
+                # find 4 digit sequences and return the smallest one
+                years = re.findall(r'\d{4}', summary)
+                current_year = datetime.datetime.now().year
+                years = [int(y) for y in years if int(y) > 1750 and int(y) < current_year]
+                if len(years) > 0:
+                    return min(years)
+        return ""
+
     def process_information(self):
         self.data['Company'] = [self.get_company(t) for t in range(len(self.yh_tickers))]
-        self.data["Executive"] = [self.get_company_officers(t) for t in range(len(self.yh_tickers))] 
+        self.data["Top_Executive"] = [self.get_company_officers(t) for t in range(len(self.yh_tickers))] 
         self.data['Industry'] = [self.get_industry(t) for t in range(len(self.yh_tickers))]
         self.data['quoteType'] = [self.get_quote_type(t) for t in range(len(self.yh_tickers))]
         self.data['sector'] = [self.get_sector(t) for t in range(len(self.yh_tickers))]
+        self.data['first_traded'] = [self.get_year_first_traded(t) for t in range(len(self.yh_tickers))]
+        self.data['year_founded'] = [self.get_year_founded(t) for t in range(len(self.yh_tickers))]
+
+    def ticker_info(self, ticker):
+        ticker = ticker.upper()
+        t = Ticker(ticker)
+
+        asset_p = t.asset_profile[ticker]
+        quote_t = t.quote_type[ticker]
+        if type(asset_p) != dict:
+            asset_p = {}
+        if type(quote_t) != dict:
+            quote_t = {}
+
+        return {**asset_p, **quote_t}
+        
 
 
 if __name__ == "__main__":
+    # get all stock symbols. This is a slow process, so it is cached to file called company_list.pkl.
     search_terms = aquire_stock_search_terms()
-    search_terms.data.head()
+
+    # example of how to retrieve the data we've parsed
+    print(search_terms.data)
+
+    # show all info for a given ticker
+    info = search_terms.ticker_info('TSLA')
+    print(info)
