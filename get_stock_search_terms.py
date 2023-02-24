@@ -14,10 +14,14 @@ class aquire_stock_search_terms():
     """A work-in-progress. Goal is to take stock ticker symbols and return a list of search terms for NLP web scraping. Officers, affiliated companies, company name, etc."""
     def __init__(self, file_path = 'data/Stocks/', file_ext = '.csv'):
         self.file_path = file_path
-        self.load_symbols()
-        self.ticker_list_to_dataframe()
-        self.get_company_list()
-        self.process_information()
+        self.file_ext = file_ext
+
+        if self.verify_dataset_downloaded():
+            self.load_symbols()
+            self.ticker_list_to_dataframe()
+            self.get_company_list()
+            self.process_information()
+
 
     def load_symbols(self):
         """Load all the stock symbols."""
@@ -193,8 +197,12 @@ class aquire_stock_search_terms():
 
     def ticker_info(self, ticker):
         ticker = ticker.upper()
-        t = Ticker(ticker)
 
+        if ticker not in self.stocks_symbols:
+            print("Ticker not found.")
+            return {}
+
+        t = Ticker(ticker)
         asset_p = t.asset_profile[ticker]
         quote_t = t.quote_type[ticker]
         if type(asset_p) != dict:
@@ -204,7 +212,26 @@ class aquire_stock_search_terms():
 
         return {**asset_p, **quote_t}
         
+    def verify_dataset_downloaded(self):
+        error = ""
+        directions = "\n Please ensure that you have downloaded the stock data first from https://www.kaggle.com/datasets/footballjoe789/us-stock-dataset. \n Then extract Stocks/ to the data/ folder and move Stock_List.csv to data/. \n Then run this script again. \n Thank you. \n"
 
+        if os.path.exists("data/Stock_List.csv") == False:
+            error = "data/Stock_List.csv is missing. "
+
+        if os.path.exists("data/Stocks/"):
+            files_found = len(glob("data/Stocks/*"))
+            if files_found == 0:
+                error = "No stock data found in data/Stocks/ folder. "
+        else:
+            error = "data/Stocks/ folder is missing. "
+        
+        if error != "":
+            print(error + directions)
+            self.data = pd.DataFrame()
+            self.stocks_symbols = []
+            self.yh_tickers = []
+        return True if error == "" else False
 
 if __name__ == "__main__":
     # get all stock symbols. This is a slow process, so it is cached to file called company_list.pkl.
