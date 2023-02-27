@@ -1,14 +1,124 @@
+from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+import base64, os
+import gc
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from glob import glob
 from compress_pickle import dump, load
-import os
 from yahooquery import Ticker
 import timeit
 import time
 import datetime
 import re
+from getpass import getpass
+
+def fernet_key_encryption(password:str, name:str):
+    """Encrypts and decrypts a key using Fernet encryption. 
+    
+    Args:
+    
+        password (str): The password to encrypt the key with.
+        
+        name (str): The name of the key to encrypt.
+        
+    Returns:
+    Saves the encrypted key to a file and returns the decrypted key."""
+    # Convert to type bytes
+    password = password.encode()
+    
+    # generate salt
+    if not os.path.exists('salt.secret'):
+        #search for .secret files and delete them if the required salt file is not found
+        for file in glob('*.secret'):
+            os.remove(file)
+
+        salt = os.urandom(16)
+        with open('salt.secret', 'wb') as f:
+            f.write(salt)
+    else:
+        with open('salt.secret', 'rb') as f:
+            salt = f.read()
+
+    # derive key from password
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA512(),
+        length=32,
+        salt=salt,
+        iterations=1000000) # lower this if it takes too long
+
+    key = base64.urlsafe_b64encode(kdf.derive(password))
+    fernet = Fernet(key)
+
+    if os.path.exists(f'{name}_token.secret'):
+        with open(f'{name}_token.secret', 'rb') as f:
+            token = f.read()
+        input_message = fernet.decrypt(token)
+        return input_message.decode()
+
+    else:
+        input_message = getpass(f'Please Enter your {name} API key. Seperate any username(first)/passwords(second) with a space: ').encode()
+        token = fernet.encrypt(input_message)
+        del input_message
+        gc.collect()
+        with open(f'{name}_token.secret', 'wb') as f:
+            f.write(token)
+        return token.decode()
+
+class get_macroeconomic_data ():
+    """Aquire historical macroeconomic data from different sources."""
+    def __init__(self, path):
+        self.path = path
+
+    def get_GDP(self):
+        pass
+
+    def get_inflation(self):
+        pass
+
+    def get_interest_rates(self):
+        pass
+
+    def get_unemployment(self):
+        pass
+
+    def get_exchange_rates(self):
+        pass
+
+    def get_commodities(self):
+        pass
+
+    def parse_for_trade_wars(self):
+        pass
+
+    def get_trade_wars(self):
+        pass
+
+    def get_nat_disasters(self):
+        pass
+
+    def calculate_average_weather(self):
+        pass
+
+    def get_average_weather(self):
+        pass
+
+    def get_holidays(self):
+        pass
+
+    def get_federal_holidays(self):
+        pass
+
+    def calculate_indicators(self):
+        pass
+
+    def get_indicators(self):
+        pass
+
+    def get_pandemics(self):
+        pass
 
 class aquire_stock_search_terms():
     """A work-in-progress. Goal is to take stock ticker symbols and return a list of search terms for NLP web scraping. Officers, affiliated companies, company name, etc."""
@@ -21,7 +131,6 @@ class aquire_stock_search_terms():
             self.ticker_list_to_dataframe()
             self.get_company_list()
             self.process_information()
-
 
     def load_symbols(self):
         """Load all the stock symbols."""
@@ -232,14 +341,3 @@ class aquire_stock_search_terms():
             self.stocks_symbols = []
             self.yh_tickers = []
         return True if error == "" else False
-
-if __name__ == "__main__":
-    # get all stock symbols. This is a slow process, so it is cached to file called company_list.pkl.
-    search_terms = aquire_stock_search_terms()
-
-    # example of how to retrieve the data we've parsed
-    print(search_terms.data)
-
-    # show all info for a given ticker
-    info = search_terms.ticker_info('TSLA')
-    print(info)
