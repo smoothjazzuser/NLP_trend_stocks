@@ -14,36 +14,38 @@ import time
 import datetime
 import re
 from getpass import getpass
+import os
 
-def download_datasets(url:str, unzip:bool=True, delete_zip:bool=True, files_to_move:dict = {}, delete=False):
+def download_datasets(url:str, unzip:bool=True, delete_zip:bool=True, files_to_move:dict = {}, delete=False, dest_name:str = None, verbose:bool = True):
     """Downloads the datasets from kaggle using the official kaggle api.
     
-    See this forumn for more information:
+    See this forumn for more information, as the official documentation is lacking:
         https://stackoverflow.com/questions/55934733/documentation-for-kaggle-api-within-python"""
     from kaggle.api.kaggle_api_extended import KaggleApi 
-    import os
 
     api = KaggleApi()
     api.authenticate()
     
+    if not os.path.exists('data/{}'.format(dest_name)):
+        if not os.path.exists('data/'): os.mkdir('data/')
+        if "datasets" in url: url = url.split("datasets/")[-1]
 
-    if "datasets" in url:
-        url = url.split("datasets/")[-1]
+        api.dataset_download_files(url, path='data/', unzip=unzip, quiet=not verbose)
 
-    api.dataset_download_files(url, path='data/', unzip=unzip)
+        for k, v in files_to_move.items():
+            if os.path.exists('data/{}'.format(k)):
+                os.rename('data/{}'.format(k), 'data/{}'.format(v))
 
-    for k, v in files_to_move.items():
-        if os.path.exists('data/{}'.format(k)):
-            os.rename('data/{}'.format(k), 'data/{}'.format(v))
+        if delete_zip:
+            if os.path.exists('data/{}.zip'.format(url)):
+                os.remove('data/{}.zip'.format(url))
 
-    if delete_zip:
-        if os.path.exists('data/{}.zip'.format(url)):
-            os.remove('data/{}.zip'.format(url))
-
-    if delete:
-        folder = url.split('/')[-1]
-        if os.path.exists('data/{}'.format(folder)):
-            os.rmdir('data/{}'.format(folder))
+        if delete:
+            folder = url.split('/')[-1]
+            if os.path.exists('data/{}'.format(folder)):
+                os.rmdir('data/{}'.format(folder))
+    else:
+        if verbose: print(f"Dataset ({dest_name}) already downloaded.")
 
     return
 
