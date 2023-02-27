@@ -15,6 +15,38 @@ import datetime
 import re
 from getpass import getpass
 
+def download_datasets(url:str, unzip:bool=True, delete_zip:bool=True, files_to_move:dict = {}, delete=False):
+    """Downloads the datasets from kaggle using the official kaggle api.
+    
+    See this forumn for more information:
+        https://stackoverflow.com/questions/55934733/documentation-for-kaggle-api-within-python"""
+    from kaggle.api.kaggle_api_extended import KaggleApi 
+    import os
+
+    api = KaggleApi()
+    api.authenticate()
+    
+
+    if "datasets" in url:
+        url = url.split("datasets/")[-1]
+
+    api.dataset_download_files(url, path='data/', unzip=unzip)
+
+    for k, v in files_to_move.items():
+        if os.path.exists('data/{}'.format(k)):
+            os.rename('data/{}'.format(k), 'data/{}'.format(v))
+
+    if delete_zip:
+        if os.path.exists('data/{}.zip'.format(url)):
+            os.remove('data/{}.zip'.format(url))
+
+    if delete:
+        folder = url.split('/')[-1]
+        if os.path.exists('data/{}'.format(folder)):
+            os.rmdir('data/{}'.format(folder))
+
+    return
+
 def fernet_key_encryption(password:str, name:str):
     """Encrypts and decrypts a key using Fernet encryption. 
     
