@@ -16,6 +16,7 @@ import re
 from getpass import getpass
 from shutil import rmtree
 import os
+pd.set_option('io.parquet.engine', 'pyarrow')
 
 def download_datasets(url:str, unzip:bool=True, delete_zip:bool=True, files_to_move:dict = {}, delete=False, dest_name:str = None, verbose:bool = True):
     """Downloads the datasets from kaggle using the official kaggle api.
@@ -34,13 +35,13 @@ def download_datasets(url:str, unzip:bool=True, delete_zip:bool=True, files_to_m
         for file in glob('data/*.zip'):
             os.remove(file)
         
-    if not list(files_to_move.values())[0].split('/')[-1] in [x.split('/')[-1] for x in os.listdir('data/{}'.format(dest_name))] + [x.split('/')[-1] for x in os.listdir('data/')]:
+    if not list(files_to_move.values())[0].split('/')[-1].split('.')[0] in [file.split('\\')[-1].split('.')[0] for file in glob('data/*/*')] +  [file.split('\\')[-1].split('.')[0] for file in glob('data/*/*/*')] + [file.split('\\')[-1].split('.')[0] for file in glob('data/*')]:
 
         api.dataset_download_files(url, path='data/', unzip=unzip, quiet=not verbose)
 
         for k, v in files_to_move.items():
-            if os.path.exists('data/{}'.format(k)):
-                os.rename('data/{}/'.format(k), 'data/{}/'.format(v))
+            if os.path.exists(f'data/{k}'):
+                os.rename(f'data/{k}', f'data/{v}')
 
         if delete_zip:
             for file in glob('data/*.zip'):
@@ -48,8 +49,8 @@ def download_datasets(url:str, unzip:bool=True, delete_zip:bool=True, files_to_m
 
         if delete:
             folder = url.split('/')[-1]
-            if os.path.exists('data/{}/'.format(folder)):
-                os.rmdir('data/{}/'.format(folder))
+            if os.path.exists(f'data/{folder}'):
+                os.rmdir(f'data/{folder}')
     else:
         if verbose: print(f"Dataset ({dest_name}) already downloaded.")
 
@@ -58,6 +59,25 @@ def download_datasets(url:str, unzip:bool=True, delete_zip:bool=True, files_to_m
         os.removedirs('data/Stocks')
         os.rename('data/Data/Stocks', 'data/Stocks')
         rmtree('data/Data')
+
+    # convert the files to parquet format, which is a much better for this project
+    csv_files_to_compress = glob('data/*/*.csv') + glob('data/*/*/*.csv') + glob('data/*.csv')
+    for file in csv_files_to_compress:
+        print(file)
+        if not os.path.exists(file.replace('.csv', '.parquet')):
+            df = pd.read_csv(file, low_memory=False, parse_dates=True, infer_datetime_format=True, on_bad_lines='warn')
+            df.to_parquet(file.replace('.csv', '.parquet'), compression='brotli', engine='pyarrow')
+        if os.path.exists(file):
+            os.remove(file)
+
+    xlsx_files_to_compress = glob('data/*/*.xlsx') + glob('data/*/*/*.xlsx') + glob('data/*.xlsx')
+    for file in xlsx_files_to_compress:
+        print(file)
+        if not os.path.exists(file.replace('.xlsx', '.parquet')):
+            df = pd.read_excel(file, parse_dates=True, on_bad_lines='warn')
+            df.to_parquet(file.replace('.xlsx', '.parquet'), compression='brotli', engine='pyarrow')
+        if os.path.exists(file):
+            os.remove(file)
 
     return
 
@@ -113,10 +133,23 @@ def fernet_key_encryption(password:str, name:str):
             f.write(token)
         return token.decode()
 
+
 class get_macroeconomic_data ():
     """Aquire historical macroeconomic data from different sources."""
     def __init__(self, path):
         self.path = path
+
+    def read_parquet(self):
+        pass
+
+    def get_FRED(self):
+        pass
+
+    def get_BLS(self):
+        pass
+
+    def get_BIS(self):
+        pass
 
     def get_GDP(self):
         pass
@@ -167,7 +200,7 @@ class get_macroeconomic_data ():
         pass
 class aquire_stock_search_terms():
     """A work-in-progress. Goal is to take stock ticker symbols and return a list of search terms for NLP web scraping. Officers, affiliated companies, company name, etc."""
-    def __init__(self, file_path = 'data/Stocks/', file_ext = '.csv'):
+    def __init__(self, file_path = 'data/Stocks/', file_ext = '.parquet'):
         self.file_path = file_path
         self.file_ext = file_ext
 
@@ -179,7 +212,7 @@ class aquire_stock_search_terms():
 
     def load_symbols(self):
         """Load all the stock symbols."""
-        self.stocks_symbols = pd.read_csv("data/Stock_List.csv")['Symbol'].tolist()
+        self.stocks_symbols = pd.read_parquet("data/Stock_List.parquet")['Symbol'].tolist()
         return self.stocks_symbols
 
     def ticker_list_to_dataframe(self):
@@ -368,10 +401,10 @@ class aquire_stock_search_terms():
         
     def verify_dataset_downloaded(self):
         error = ""
-        directions = "\n Please ensure that you have downloaded the stock data first from https://www.kaggle.com/datasets/footballjoe789/us-stock-dataset. \n Then extract Stocks/ to the data/ folder and move Stock_List.csv to data/. \n Then run this script again. \n Thank you. \n"
+        directions = "\n Please ensure that you have downloaded the stock data first from https://www.kaggle.com/datasets/footballjoe789/us-stock-dataset. \n Then extract Stocks/ to the data/ folder and move Stock_List to data/. \n Then run this script again. \n Thank you. \n"
 
-        if os.path.exists("data/Stock_List.csv") == False:
-            error = "data/Stock_List.csv is missing. "
+        if os.path.exists("data/Stock_List.parquet") == False:
+            error = "data/Stock_List.parquet is missing. "
 
         if os.path.exists("data/Stocks/"):
             files_found = len(glob("data/Stocks/*"))
