@@ -74,7 +74,7 @@ def download_datasets(url:str, unzip:bool=True, delete_zip:bool=True, files_to_m
     for file in xlsx_files_to_compress:
         print(file)
         if not os.path.exists(file.replace('.xlsx', '.parquet')):
-            df = pd.read_excel(file, parse_dates=True, on_bad_lines='warn')
+            df = pd.read_excel(file, parse_dates=True)
             df.to_parquet(file.replace('.xlsx', '.parquet'), compression='brotli', engine='pyarrow')
         if os.path.exists(file):
             os.remove(file)
