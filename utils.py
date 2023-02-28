@@ -28,6 +28,7 @@ def download_datasets(url:str, unzip:bool=True, delete_zip:bool=True, files_to_m
     
     if not os.path.exists('data/{}'.format(dest_name)):
         if not os.path.exists('data/'): os.mkdir('data/')
+        if not os.path.exists('data/{}'.format(dest_name)): os.mkdir('data/{}'.format(dest_name))
         if "datasets" in url: url = url.split("datasets/")[-1]
 
         api.dataset_download_files(url, path='data/', unzip=unzip, quiet=not verbose)
