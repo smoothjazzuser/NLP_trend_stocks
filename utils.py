@@ -25,11 +25,15 @@ def download_datasets(url:str, unzip:bool=True, delete_zip:bool=True, files_to_m
 
     api = KaggleApi()
     api.authenticate()
-    
-    if not os.path.exists('data/{}'.format(dest_name)):
-        if not os.path.exists('data/'): os.mkdir('data/')
-        if not os.path.exists('data/{}'.format(dest_name)): os.mkdir('data/{}'.format(dest_name))
-        if "datasets" in url: url = url.split("datasets/")[-1]
+
+    if "datasets" in url: url = url.split("datasets/")[-1]
+    if not os.path.exists('data/'): os.mkdir('data/')
+    if not os.path.exists('data/{}'.format(dest_name)): os.mkdir('data/{}'.format(dest_name))
+    if delete_zip:
+            if os.path.exists('data/{}.zip'.format(url)):
+                os.remove('data/{}.zip'.format(url))
+        
+    if not list(files_to_move.values())[0] in glob(f'data/*/*'):
 
         api.dataset_download_files(url, path='data/', unzip=unzip, quiet=not verbose)
 
