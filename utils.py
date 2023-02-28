@@ -30,10 +30,10 @@ def download_datasets(url:str, unzip:bool=True, delete_zip:bool=True, files_to_m
     if not os.path.exists('data/'): os.mkdir('data/')
     if not os.path.exists('data/{}'.format(dest_name)): os.mkdir('data/{}'.format(dest_name))
     if delete_zip:
-            if os.path.exists('data/{}.zip'.format(url)):
-                os.remove('data/{}.zip'.format(url))
+        for file in glob('data/*.zip'):
+            os.remove(file)
         
-    if not list(files_to_move.values())[0] in glob(f'data/*/*'):
+    if not list(files_to_move.values())[0].split('/')[-1] in [x.split('/')[-1] for x in os.listdir('data/{}'.format(dest_name))]:
 
         api.dataset_download_files(url, path='data/', unzip=unzip, quiet=not verbose)
 
@@ -42,8 +42,8 @@ def download_datasets(url:str, unzip:bool=True, delete_zip:bool=True, files_to_m
                 os.rename('data/{}'.format(k), 'data/{}'.format(v))
 
         if delete_zip:
-            if os.path.exists('data/{}.zip'.format(url)):
-                os.remove('data/{}.zip'.format(url))
+            for file in glob('data/*.zip'):
+                os.remove(file)
 
         if delete:
             folder = url.split('/')[-1]
