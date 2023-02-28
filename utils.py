@@ -63,16 +63,14 @@ def download_datasets(url:str, unzip:bool=True, delete_zip:bool=True, files_to_m
     # convert the files to parquet format, which is a much better for this project
     csv_files_to_compress = glob('data/*/*.csv') + glob('data/*/*/*.csv') + glob('data/*.csv')
     for file in csv_files_to_compress:
-        print(file)
         if not os.path.exists(file.replace('.csv', '.parquet')):
-            df = pd.read_csv(file, low_memory=False, parse_dates=True, infer_datetime_format=True, on_bad_lines='warn')
+            df = pd.read_csv(file, low_memory=False, parse_dates=True, infer_datetime_format=True, on_bad_lines='skip', encoding_errors= 'replace')
             df.to_parquet(file.replace('.csv', '.parquet'), compression='brotli', engine='pyarrow')
         if os.path.exists(file):
             os.remove(file)
 
     xlsx_files_to_compress = glob('data/*/*.xlsx') + glob('data/*/*/*.xlsx') + glob('data/*.xlsx')
     for file in xlsx_files_to_compress:
-        print(file)
         if not os.path.exists(file.replace('.xlsx', '.parquet')):
             df = pd.read_excel(file, parse_dates=True)
             df.to_parquet(file.replace('.xlsx', '.parquet'), compression='brotli', engine='pyarrow')
