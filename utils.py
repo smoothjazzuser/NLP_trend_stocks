@@ -33,13 +33,13 @@ def download_datasets(url:str, unzip:bool=True, delete_zip:bool=True, files_to_m
         for file in glob('data/*.zip'):
             os.remove(file)
         
-    if not list(files_to_move.values())[0].split('/')[-1] in [x.split('/')[-1] for x in os.listdir('data/{}'.format(dest_name))]:
+    if not list(files_to_move.values())[0].split('/')[-1] in [x.split('/')[-1] for x in os.listdir('data/{}'.format(dest_name))] + [x.split('/')[-1] for x in os.listdir('data/')]:
 
         api.dataset_download_files(url, path='data/', unzip=unzip, quiet=not verbose)
 
         for k, v in files_to_move.items():
             if os.path.exists('data/{}'.format(k)):
-                os.rename('data/{}'.format(k), 'data/{}'.format(v))
+                os.rename('data/{}/'.format(k), 'data/{}/'.format(v))
 
         if delete_zip:
             for file in glob('data/*.zip'):
@@ -47,8 +47,8 @@ def download_datasets(url:str, unzip:bool=True, delete_zip:bool=True, files_to_m
 
         if delete:
             folder = url.split('/')[-1]
-            if os.path.exists('data/{}'.format(folder)):
-                os.rmdir('data/{}'.format(folder))
+            if os.path.exists('data/{}/'.format(folder)):
+                os.rmdir('data/{}/'.format(folder))
     else:
         if verbose: print(f"Dataset ({dest_name}) already downloaded.")
 
