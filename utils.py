@@ -14,6 +14,7 @@ import time
 import datetime
 import re
 from getpass import getpass
+from shutil import rmtree
 import os
 
 def download_datasets(url:str, unzip:bool=True, delete_zip:bool=True, files_to_move:dict = {}, delete=False, dest_name:str = None, verbose:bool = True):
@@ -51,6 +52,12 @@ def download_datasets(url:str, unzip:bool=True, delete_zip:bool=True, files_to_m
                 os.rmdir('data/{}/'.format(folder))
     else:
         if verbose: print(f"Dataset ({dest_name}) already downloaded.")
+
+    # the above function does not remove/transfer files from the folder 'data/Data' correctly, so we need to do it manually
+    if os.path.exists('data\Data\Stocks'):
+        os.removedirs('data/Stocks')
+        os.rename('data/Data/Stocks', 'data/Stocks')
+        rmtree('data/Data')
 
     return
 
@@ -158,7 +165,6 @@ class get_macroeconomic_data ():
 
     def get_pandemics(self):
         pass
-
 class aquire_stock_search_terms():
     """A work-in-progress. Goal is to take stock ticker symbols and return a list of search terms for NLP web scraping. Officers, affiliated companies, company name, etc."""
     def __init__(self, file_path = 'data/Stocks/', file_ext = '.csv'):
