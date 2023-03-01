@@ -64,7 +64,7 @@ def download_datasets(url:str, unzip:bool=True, delete_zip:bool=True, files_to_m
     csv_files_to_compress = glob('data/*/*.csv') + glob('data/*/*/*.csv') + glob('data/*.csv')
     for file in csv_files_to_compress:
         if not os.path.exists(file.replace('.csv', '.parquet')):
-            df = pd.read_csv(file, low_memory=False, parse_dates=True, infer_datetime_format=True, on_bad_lines='skip', encoding_errors= 'replace')
+            df = load_file(file)
             df.to_parquet(file.replace('.csv', '.parquet'), compression='brotli', engine='pyarrow')
         if os.path.exists(file):
             os.remove(file)
@@ -72,12 +72,20 @@ def download_datasets(url:str, unzip:bool=True, delete_zip:bool=True, files_to_m
     xlsx_files_to_compress = glob('data/*/*.xlsx') + glob('data/*/*/*.xlsx') + glob('data/*.xlsx')
     for file in xlsx_files_to_compress:
         if not os.path.exists(file.replace('.xlsx', '.parquet')):
-            df = pd.read_excel(file, parse_dates=True)
+            df = load_file(file)
             df.to_parquet(file.replace('.xlsx', '.parquet'), compression='brotli', engine='pyarrow')
         if os.path.exists(file):
             os.remove(file)
 
-    return
+def load_file(file:str):
+    """Reads file into a pandas dataframe. Supports csv, parquet and xlsx files. """
+    file_type = file.split('.')[-1]
+    if file_type == 'parquet':
+        return pd.read_parquet(file)
+    elif file_type == 'csv':
+        return pd.read_csv(file, low_memory=False, parse_dates=True, infer_datetime_format=True, on_bad_lines='skip', encoding_errors= 'replace')
+    elif file_type == 'xlsx':
+        return pd.read_excel(file, parse_dates=True)
 
 def fernet_key_encryption(password:str, name:str):
     """Encrypts and decrypts a key using Fernet encryption. 
@@ -131,6 +139,41 @@ def fernet_key_encryption(password:str, name:str):
             f.write(token)
         return token.decode()
 
+def cpi_adjust(df: pd.DataFrame, cpi: pd.DataFrame):
+    """Adjusts the dataframe to account for inflation."""
+
+    for col in [x for x in df.columns if x not in ["CPI", "date", "Unemp_rate", "mortgage_rate"]]:
+        df[col] = df[col].div(cpi.CPI, axis=0)
+
+    return df
+
+def interpolate_months_to_days(df: pd.DataFrame):
+    """Interpolates the dataframe to account for missing days. E.g, Macro data is usually available on a monthly basis."""
+    #check if index is already datetime
+    if not isinstance(df.index, pd.DatetimeIndex):
+        #drop the time of day
+        #df.date = df.date.dt.date
+        df.index = pd.to_datetime(df.date)
+        df.drop(columns=['date'], inplace=True)
+
+    df = df.resample('D').interpolate(method='linear')
+    
+    return df
+
+def intersect_df(df1: pd.DataFrame, df2: pd.DataFrame, interpolate_to_days: bool = False):
+    """Performantly Intersects two dataframes based on their index.
+    
+    Args: Two dataframes with a datetime index.
+    
+    Returns: The datapoints shared between the two datasets."""
+
+    if interpolate_to_days:
+        df1 = interpolate_months_to_days(df1)
+        df2 = interpolate_months_to_days(df2)
+
+    df1 = df1[df1.index.isin(df2.index)]
+    df2 = df2[df2.index.isin(df1.index)]
+    return df1, df2
 
 class get_macroeconomic_data ():
     """Aquire historical macroeconomic data from different sources."""
@@ -210,7 +253,7 @@ class aquire_stock_search_terms():
 
     def load_symbols(self):
         """Load all the stock symbols."""
-        self.stocks_symbols = pd.read_parquet("data/Stock_List.parquet")['Symbol'].tolist()
+        self.stocks_symbols = load_file("data/Stock_List.parquet")['Symbol'].tolist()
         return self.stocks_symbols
 
     def ticker_list_to_dataframe(self):
