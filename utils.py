@@ -147,20 +147,53 @@ def cpi_adjust(df: pd.DataFrame, cpi: pd.DataFrame):
 
     return df
 
-def interpolate_months_to_days(df: pd.DataFrame):
-    """Interpolates the dataframe to account for missing days. E.g, Macro data is usually available on a monthly basis."""
+def interpolate_months_to_days(df: pd.DataFrame, extend_trend_to_today: bool = False):
+    """Interpolates the dataframe to account for missing days. E.g, Macro data is usually available on a monthly basis.
+    
+    Args: DataFrame, extend_trend_to_today (bool): If True, the index will be extended to today (only enabled for monthly data).)"""
     #check if index is already datetime
     if not isinstance(df.index, pd.DatetimeIndex):
         #drop the time of day
         #df.date = df.date.dt.date
-        df.index = pd.to_datetime(df.date)
-        df.drop(columns=['date'], inplace=True)
+        if 'date' in df.columns: col = 'date'
+        elif 'Date' in df.columns: col = 'Date'
+        else: 
+            for collumn in df.columns:
+                if 'date' in col.lower():
+                    col = collumn
+                    break
+        df[col] = df[col].apply(lambda x: x.split(' ')[0])
+        df.index = pd.to_datetime(df[col])
+        df.drop(columns=[col], inplace=True)
 
-    df = df.resample('D').interpolate(method='linear')
+    #check if the indexonthly
+    if abs(df.index[-2:-1] - df.index[-1:]) > abs(14* pd.Timedelta('1 day')):
+        monthly = True
+    else:
+        monthly = False
+
+    if extend_trend_to_today and monthly:
+        print('Extending trend to today. Warning: This may not be accurate and is only suggested for monthly economic data.')
+        days_to_extend = (pd.to_datetime('today') - df.index[-1] + pd.Timedelta('1 day')).days
+        
+        cols = [[] for x in range(len(df.columns))]
+        for col in range(len(df.columns)):
+            fit = np.polyfit(range(len(df.iloc[-7:])), df.iloc[-7:, col], 1)
+            # this next step needs to account for the change in the index from months to days
+            cols[col] = np.poly1d(fit)(range(len(df.iloc[-7:]), len(df.iloc[-7:]) + days_to_extend)) 
+
+        # for every column in the cols, create a new column in a new dataframe
+        df2 = pd.DataFrame(cols).T
+        df2.columns = df.columns # copy over the column names
+        df2.index = pd.date_range(df.index[-1] + pd.Timedelta('1 day'), periods=days_to_extend, freq='D') # create a new index without any overlap
+        df = pd.concat([df, df2]) # concat the two dataframes
+
+        
+    df = df.resample('D').interpolate(method='linear') # interpolate the missing days
     
     return df
 
-def intersect_df(df1: pd.DataFrame, df2: pd.DataFrame, interpolate_to_days: bool = False):
+def intersect_df(df1: pd.DataFrame, df2: pd.DataFrame, interpolate_to_days: bool = False, extend_trend_to_today: bool = False):
     """Performantly Intersects two dataframes based on their index.
     
     Args: Two dataframes with a datetime index.
@@ -168,8 +201,8 @@ def intersect_df(df1: pd.DataFrame, df2: pd.DataFrame, interpolate_to_days: bool
     Returns: The datapoints shared between the two datasets."""
 
     if interpolate_to_days:
-        df1 = interpolate_months_to_days(df1)
-        df2 = interpolate_months_to_days(df2)
+        df1 = interpolate_months_to_days(df1, extend_trend_to_today)
+        df2 = interpolate_months_to_days(df2, extend_trend_to_today)
 
     df1 = df1[df1.index.isin(df2.index)]
     df2 = df2[df2.index.isin(df1.index)]
