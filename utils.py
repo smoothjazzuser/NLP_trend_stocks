@@ -147,6 +147,50 @@ def cpi_adjust(df: pd.DataFrame, cpi: pd.DataFrame):
 
     return df
 
+def parse_emotion_dataframes(selection: int = [0, 1, 2, 3, 4]):
+    """Parses the emotion dataframes. 
+    
+    Args: selection (int): The emotion dataframes to parse. 0 = GoEmotions, 1 = """
+
+    def df_load_(file, drop_cols, new_cols, rename_cols=[]):
+        df = load_file(file)
+        if 'label' in df.columns:
+            df = pd.get_dummies(df, columns=['label'])
+        if 'Emotion' in df.columns:
+            df = pd.get_dummies(df, columns=['Emotion'])
+        df = df.drop(columns=drop_cols)
+        if rename_cols.__len__() > 0:
+            df.columns = rename_cols
+        for col in new_cols:
+            if col not in df.columns:
+                df[col] = 0
+        all_emotions = df.columns[df.columns != 'text']
+        return df, all_emotions
+
+    if 0 in selection:
+        df0, all_emotions = df_load_('data/Emotions/goemotions.parquet', ['example_very_unclear', 'rater_id', 'created_utc', 'parent_id', 'subreddit', 'author', 'id', 'link_id'], ['happiness'])
+
+
+    if 1 in selection:
+        df1,_ = df_load_('data/Emotions/training.parquet', [], all_emotions, ['text', 'anger', 'fear', 'joy', 'love', 'sadness', 'surprise'])
+
+    if 2 in selection:
+        df2, _ = df_load_('data/Emotions/validation.parquet', [], all_emotions, ['text', 'anger', 'fear', 'joy', 'love', 'sadness', 'surprise'])
+
+    if 3 in selection:
+        df3,_ = df_load_('data/Emotions/test.parquet', [], all_emotions, ['text', 'anger', 'fear', 'joy', 'love', 'sadness', 'surprise'])
+
+
+    if 4 in selection:
+        df4,_ = df_load_('data/Emotions/dataset(clean).parquet', ['Original Content'], all_emotions, ['text','anger', 'disappointment', 'happiness'])
+
+
+    df = pd.concat([df0, df1, df2, df3, df4], ignore_index=True)
+
+    return df
+
+    
+
 def interpolate_months_to_days(df: pd.DataFrame, extend_trend_to_today: bool = False):
     """Interpolates the dataframe to account for missing days. E.g, Macro data is usually available on a monthly basis.
     
