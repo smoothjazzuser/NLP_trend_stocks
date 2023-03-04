@@ -147,12 +147,14 @@ def cpi_adjust(df: pd.DataFrame, cpi: pd.DataFrame):
 
     return df
 
-def parse_emotion_dataframes(selection: int = [0, 1, 2, 3, 4]):
+def parse_emotion_dataframes(selection: int = [0, 1, 2, 3, 4], ensure_only_one_label: bool = True):
     """Parses the emotion dataframes. 
     
     Args: selection (int): The emotion dataframes to parse. 0 = GoEmotions, 1 = """
 
     def df_load_(file, drop_cols, new_cols, rename_cols=[]):
+        """Loads the dataframe and drops the columns that are not needed."""
+        df0, df1, df2, df3, df4 = pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame
         df = load_file(file)
         if 'label' in df.columns:
             df = pd.get_dummies(df, columns=['label'])
@@ -164,32 +166,35 @@ def parse_emotion_dataframes(selection: int = [0, 1, 2, 3, 4]):
         for col in new_cols:
             if col not in df.columns:
                 df[col] = 0
-        all_emotions = df.columns[df.columns != 'text']
+        all_emotions = list(set([x for x in df.columns[df.columns != 'text'] if x not in drop_cols]))
+
+
+        # Remove the numerical rows that add up to greater than 1 or equal to 0 and reset the index
+        if ensure_only_one_label:
+            e = df[all_emotions]
+            df = df[(e.sum(axis=1) <= 1) & (e.sum(axis=1) > 0)].reset_index(drop=True)
+
         return df, all_emotions
 
     if 0 in selection:
         df0, all_emotions = df_load_('data/Emotions/goemotions.parquet', ['example_very_unclear', 'rater_id', 'created_utc', 'parent_id', 'subreddit', 'author', 'id', 'link_id'], ['happiness'])
 
-
     if 1 in selection:
-        df1,_ = df_load_('data/Emotions/training.parquet', [], all_emotions, ['text', 'anger', 'fear', 'joy', 'love', 'sadness', 'surprise'])
+        df1,all_emotions = df_load_('data/Emotions/training.parquet', [], all_emotions, ['text', 'anger', 'fear', 'joy', 'love', 'sadness', 'surprise'])
 
     if 2 in selection:
-        df2, _ = df_load_('data/Emotions/validation.parquet', [], all_emotions, ['text', 'anger', 'fear', 'joy', 'love', 'sadness', 'surprise'])
+        df2, all_emotions = df_load_('data/Emotions/validation.parquet', [], all_emotions, ['text', 'anger', 'fear', 'joy', 'love', 'sadness', 'surprise'])
 
     if 3 in selection:
-        df3,_ = df_load_('data/Emotions/test.parquet', [], all_emotions, ['text', 'anger', 'fear', 'joy', 'love', 'sadness', 'surprise'])
-
+        df3,all_emotions = df_load_('data/Emotions/test.parquet', [], all_emotions, ['text', 'anger', 'fear', 'joy', 'love', 'sadness', 'surprise'])
 
     if 4 in selection:
-        df4,_ = df_load_('data/Emotions/dataset(clean).parquet', ['Original Content'], all_emotions, ['text','anger', 'disappointment', 'happiness'])
+        df4,all_emotions = df_load_('data/Emotions/dataset(clean).parquet', ['Original Content'], all_emotions, ['text','anger', 'disappointment', 'happiness'])
 
 
     df = pd.concat([df0, df1, df2, df3, df4], ignore_index=True)
 
     return df
-
-    
 
 def interpolate_months_to_days(df: pd.DataFrame, extend_trend_to_today: bool = False):
     """Interpolates the dataframe to account for missing days. E.g, Macro data is usually available on a monthly basis.
