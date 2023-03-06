@@ -17,6 +17,8 @@ from getpass import getpass
 from shutil import rmtree
 import os
 pd.set_option('io.parquet.engine', 'pyarrow')
+import fasttext
+import fasttext.util
 
 def download_datasets(url:str, unzip:bool=True, delete_zip:bool=True, files_to_move:dict = {}, delete=False, dest_name:str = None, verbose:bool = True):
     """Downloads the datasets from kaggle using the official kaggle api.
@@ -86,6 +88,27 @@ def load_file(file:str):
         return pd.read_csv(file, low_memory=False, parse_dates=True, infer_datetime_format=True, on_bad_lines='skip', encoding_errors= 'replace')
     elif file_type == 'xlsx':
         return pd.read_excel(file, parse_dates=True)
+    elif file_type == 'pkl':
+        return load(file, compression='lz4')
+    elif file_type == '.lz4':
+        return load(file, compression='lz4')
+    else:
+        try:
+            return load(file)
+        except:
+            raise ValueError("File type not supported.")
+
+def save_file(df, file:str):
+    """Saves a pandas dataframe to a file."""
+    file_type = file.split('.')[-1]
+    if file_type == 'parquet':
+        df.to_parquet(file, compression='brotli', engine='pyarrow')
+    elif file_type == 'pkl':
+        dump(df, file + '.lz4', compression='lz4')
+    elif file_type == 'csv':
+        df.to_csv(file, index=False)
+    elif file_type == 'xlsx':
+        df.to_excel(file, index=False)
 
 def fernet_key_encryption(password:str, name:str):
     """Encrypts and decrypts a key using Fernet encryption. 
@@ -542,3 +565,23 @@ class aquire_stock_search_terms():
             self.stocks_symbols = []
             self.yh_tickers = []
         return True if error == "" else False
+
+def get_emotion_df():
+    if os.path.exists('data/Emotions/emotion_df.parquet'):
+        emotion_df = load_file('data/Emotions/emotion_df.parquet')
+    else:
+        emotion_df = parse_emotion_dataframes([0, 1, 2, 3, 4], ensure_only_one_label=True)
+        if not os.path.exists('data/Emotions/cc.en.300.bin'):
+            fasttext.util.download_model('en', if_exists='ignore')
+            os.rename('cc.en.300.bin', 'data/Emotions/cc.en.300.bin')
+            os.remove('cc.en.300.bin.gz')
+            fast_text_model = fasttext.load_model('data/Emotions/cc.en.300.bin')
+        else:
+            fast_text_model = fasttext.load_model('data/Emotions/cc.en.300.bin')
+        # preprocess the text data using the fasttext model
+        emotion_df['text'] = emotion_df['text'].apply(lambda x: fast_text_model.get_sentence_vector(x))
+        # save the preprocessed data to a file as a parquet file
+        save_file(emotion_df, 'data/Emotions/emotion_df.parquet')
+
+    return emotion_df
+
