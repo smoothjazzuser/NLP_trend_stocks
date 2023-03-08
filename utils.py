@@ -567,10 +567,18 @@ class aquire_stock_search_terms():
         return True if error == "" else False
 
 def get_emotion_df():
+    """Parses the emotion dataframes and returns a dataframe with the emotion data that has been tokenized using of of the fasttext larger english cbow models.
+    
+    This saves a little bit of the processing time at the expense of storage space.
+    
+    Returns:
+        pd.DataFrame"""
     if os.path.exists('data/Emotions/emotion_df.parquet'):
         emotion_df = load_file('data/Emotions/emotion_df.parquet')
     else:
         emotion_df = parse_emotion_dataframes([0, 1, 2, 3, 4], ensure_only_one_label=True)
+        #drop duplicates
+        emotion_df = emotion_df.drop_duplicates(subset=['text'])
         if not os.path.exists('data/Emotions/cc.en.300.bin'):
             fasttext.util.download_model('en', if_exists='ignore')
             os.rename('cc.en.300.bin', 'data/Emotions/cc.en.300.bin')
@@ -582,6 +590,95 @@ def get_emotion_df():
         emotion_df['text'] = emotion_df['text'].apply(lambda x: fast_text_model.get_sentence_vector(x))
         # save the preprocessed data to a file as a parquet file
         save_file(emotion_df, 'data/Emotions/emotion_df.parquet')
-
+    emotion_df.dropna(inplace=True)
     return emotion_df
 
+class create_triplets():
+    """Converts (x,y) to (x1,x2,x3) where x1 and x2 are positive examples and x3 is a negative example. 
+    
+    This will also randomly select two random classes to select the positive and negative examples from.
+    
+    Function could probably be optimized to be faster. I welcome any suggestions.
+    
+    Args:
+        x: np.array of shape (num_examples, x_shape)
+        y: np.array of shape (num_examples, num_classes)
+        batch_size: int, the number of examples to return in each batch
+        shuffle: bool, whether to shuffle the data or not
+        seed: int, the seed to use for the random number generator
+        
+    Returns:
+        x1: np.array of shape (batch_size, x_shape)
+        x2: np.array of shape (batch_size, x_shape)
+        x3: np.array of shape (batch_size, x_shape)
+        label1: np.array of shape (batch_size, num_classes)
+        
+    Example:
+        triplets = create_triplets(x, y, batch_size=32, shuffle=True, seed=42)
+        
+        model_siamese.fit(triplets.generator(), steps_per_epoch=triplets.num_batches, epochs=10)
+        """
+    def __init__(self, x:np.array, y:np.array, batch_size:int=32, shuffle:bool=True, seed:int=42):
+        self.x = x
+        self.y = y
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        self.seed = seed
+        self.index = 0
+        self.indices = np.arange(self.x.shape[0])
+        self.num_classes = self.y.shape[1]
+        self.class_indices = [np.where(self.y[:,i] == 1)[0] for i in range(self.num_classes)] # this is the indices for all the examples in each class
+        self.num_examples_per_class = [len(x) for x in self.class_indices]
+        self.num_examples = sum(self.num_examples_per_class)
+        self.num_batches = self.num_examples // self.batch_size
+        self.num_examples = self.num_batches * self.batch_size
+        self.num_examples_per_class = [x // self.batch_size for x in self.num_examples_per_class]
+        if seed != None: np.random.seed(self.seed)
+
+        if self.shuffle:
+            np.random.shuffle(self.indices)
+            self.class_indices = [self.indices[x] for x in self.class_indices]
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.index >= self.num_batches:
+            self.index = 0
+            raise StopIteration
+        else:
+            self.index += 1
+            return self.get_batch()
+
+    def get_batch(self):
+        # randomly select two classes
+        class1 = np.random.choice(self.num_classes, self.batch_size, replace=True)
+
+        class2 = np.random.choice(self.num_classes, self.batch_size, replace=True)
+        if np.any(class1 == class2):
+            for i in range(self.batch_size):
+                while class2[i] == class1[i]:
+                    class2[i] = np.random.randint(self.num_classes)
+
+        # randomly select batch examples from each class
+        examples1 = [np.random.randint(self.num_examples_per_class[class1[i]]) for i in range(self.batch_size)]
+        examples2 = [np.random.randint(self.num_examples_per_class[class1[i]]) for i in range(self.batch_size)]
+        examples3 = [np.random.randint(self.num_examples_per_class[class2[i]]) for i in range(self.batch_size)]
+        
+        # get the indices for the examples
+        indexes1 = [self.class_indices[class1[i]][examples1[i]] for i in range(self.batch_size)]
+        indexes2 = [self.class_indices[class1[i]][examples2[i]] for i in range(self.batch_size)]
+        indexes3 = [self.class_indices[class2[i]][examples3[i]] for i in range(self.batch_size)]
+        
+        x1 = self.x[indexes1]
+        x2 = self.x[indexes2]
+        x3 = self.x[indexes3]
+
+        return [x1, x2, x3], class1
+
+    def generator(self):
+        while True:
+            yield self.get_batch()
+
+    def __getitem__(self, index):
+        return self.get_batch()
