@@ -43,7 +43,8 @@ def download_datasets(url:str, unzip:bool=True, delete_zip:bool=True, files_to_m
 
         for k, v in files_to_move.items():
             if os.path.exists(f'data/{k}'):
-                os.rename(f'data/{k}', f'data/{v}')
+                if not os.path.exists(f'data/{v}'):
+                    os.rename(f'data/{k}', f'data/{v}')
 
         if delete_zip:
             for file in glob('data/*.zip'):
