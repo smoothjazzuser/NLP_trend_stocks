@@ -16,22 +16,28 @@ def triplet_loss(dist1, dist2, dist3):
 def siamese_model(hp):
     x_shape, label_shape = ((300,), (29,))
 
-    activation = hp.Choice('activation', ['relu', 'gelu', 'tanh', 'swish'])
-    learning_rate = hp.Choice('learning_rate', [1e-2, 1e-3, 1e-4])
-    num_layers = hp.Int('num_layers', 1, 6)
-    layer_type = hp.Choice('layer_type', ['dense', 'combined', 'conv1d'])
-    if layer_type in ['conv1d','combined']:
-        kernel_size = hp.Choice('kernel_size', [3, 5, 7])
-        strides = hp.Choice('strides', [1, 2, 3])
-        padding = hp.Choice('padding', ['same', 'valid'])
-        pool_size = hp.Choice('pool_size', [2, 3, 4])
-        pool_strides = hp.Choice('pool_strides', [1, 2, 3])
-        pool_padding = hp.Choice('pool_padding', ['same', 'valid'])
-        max_pooling = hp.Choice('max_pooling', [True, False])
+    """
+    Set of hyperperameters and neural architechure to tune
+    """
+    activation = hp.Choice('activation', ['gelu', 'swish', 'selu']) # 3 options
+    activation_head = hp.Choice('activation_head', ['gelu', 'swish', 'sigmoid', 'selu']) # 4 options
+    learning_rate = hp.Choice('learning_rate', [1e-2, 1e-3, 1e-4]) # 3 options
+    num_layers = hp.Int('num_layers', 1, 8) # 8 options
+    neurons_start = hp.Int('neurons_start', 1, 304, step=8) # 38 options
+    neurons_middle = hp.Int('neurons_middle', 1, 504, step=8) #63 options
+    neutons_end = hp.Int('neurons_end', 1, 504, step=8) #63 options
+    # total number of options = 43436736 possible configurations
+    # Thankfully, hyperband tuning cuts this number down significantly.
 
-    neurons_start = hp.Int('neurons_start', 1, 300, step=32)
-    neutons_end = hp.Int('neurons_end', 1, 300, step=32)
-    neuron_sizes = np.linspace(neurons_start, neutons_end, num_layers, dtype=int)
+    """
+    Generally in models, the number of neurons in each layer is increasing or decreasing (with a possible change around the midpoint of the model)
+    # Here we will calculate the number of neurons in each layer and the activation function for each layer based on the trends set by the hyperparameters
+    """
+    neuron_sizes_1st = np.linspace(neurons_start, neurons_middle, num_layers, dtype=int) # interpolate first half of layers sizes
+    neuron_sizes_2nd = np.linspace(neurons_middle, neutons_end, num_layers, dtype=int) # interpolate second half of layers sizes
+    neuron_sizes = list(set(neuron_sizes_1st).union(set(neuron_sizes_2nd))) # take the union of the two sets of layer sizes
+    activations = [activation] * (num_layers - 1) + [activation_head] # last layer may have different activation
+    
     
 
     inp1 = layers.Input(shape=x_shape)
@@ -39,25 +45,10 @@ def siamese_model(hp):
     inp3 = layers.Input(shape=x_shape)
 
     # create the shared weights
-    if layer_type == 'dense':
-        shared_weights = models.Sequential()
-        for i in range(num_layers):
-            shared_weights.add(layers.Dense(neuron_sizes[i], activation=activation))
-    elif layer_type == 'conv1d':
-        shared_weights = models.Sequential()
-        for i in range(num_layers):
-            shared_weights.add(layers.Reshape((-1, 1)))
-            shared_weights.add(layers.Conv1D(neuron_sizes[i], kernel_size, strides, padding, activation=activation))
-            if max_pooling: shared_weights.add(layers.MaxPool1D(pool_size, pool_strides, pool_padding))
-    elif layer_type == 'combined':
-        shared_weights = models.Sequential()
-        for i in range(num_layers):
-            shared_weights.add(layers.Reshape((-1, 1)))
-            shared_weights.add(layers.Conv1D(neuron_sizes[i], kernel_size, strides, padding, activation=activation))
-            if max_pooling: shared_weights.add(layers.MaxPool1D(pool_size, pool_strides, pool_padding))
-            shared_weights.add(layers.Flatten())
-            shared_weights.add(layers.Dense(neuron_sizes[i], activation=activation))
-
+    shared_weights = models.Sequential()
+    for i in range(num_layers):
+        shared_weights.add(layers.Dense(neuron_sizes[i], activation=activations[i]))
+    
     vec1 = shared_weights(inp1)
     vec2 = shared_weights(inp2)
     vec3 = shared_weights(inp3)
