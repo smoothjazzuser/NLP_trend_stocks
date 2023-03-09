@@ -19,8 +19,8 @@ def siamese_model(hp):
     activation = hp.Choice('activation', ['relu', 'gelu', 'tanh', 'swish'])
     learning_rate = hp.Choice('learning_rate', [1e-2, 1e-3, 1e-4])
     num_layers = hp.Int('num_layers', 1, 6)
-    layer_type = hp.Choice('layer_type', ['dense', 'conv1d', 'combined'])
-    if layer_type == 'conv1d':
+    layer_type = hp.Choice('layer_type', ['dense', 'combined', 'conv1d'])
+    if layer_type in ['conv1d','combined']:
         kernel_size = hp.Choice('kernel_size', [3, 5, 7])
         strides = hp.Choice('strides', [1, 2, 3])
         padding = hp.Choice('padding', ['same', 'valid'])

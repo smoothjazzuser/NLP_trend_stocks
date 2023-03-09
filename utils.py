@@ -650,7 +650,7 @@ class create_triplets():
             self.index += 1
             return self.get_batch()
 
-    def get_batch(self):
+    def get_batch(self): #TODO: add multiprocessing and background workers to speed this up
         # randomly select two classes
         class1 = np.random.choice(self.num_classes, self.batch_size, replace=True)
 

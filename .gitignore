@@ -2,7 +2,8 @@
 __pycache__/
 *.py[cod]
 *$py.class
-
+company_list.pkl
+*.pkl
 # C extensions
 *.so
 *.secret
@@ -135,3 +136,5 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+.gitignore
+company_list.pkl
