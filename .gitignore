@@ -10,6 +10,7 @@ __pycache__/
 .Python
 .txt
 Stocks/*
+tuning/*
 Stocks/
 data/*
 stocks/*
