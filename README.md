@@ -8,9 +8,9 @@ Fasttext is currently difficult to compile on Windows 10/11. This could limit th
 
 cd {path_to_project_folder}
 
-conda create --prefix {path_to_project_folder}/env/  -c esri -c nvidia -c conda-forge fasttext python=3.9 cudnn cudatoolkit tensorflow=2.10
+conda create --prefix {path_to_project_folder}/.env/  -c esri -c nvidia -c conda-forge fasttext python=3.9 cudnn cudatoolkit tensorflow=2.10
 
-conda activate {path_to_project_folder}/env
+conda activate {path_to_project_folder}/.env
 
 pip install -r requirements.txt
 
@@ -22,7 +22,7 @@ The first time NLP_stock_prediction.ipynb runs it will:
 
     2) Ask for Quandle Nasdaq API key (student + some other account are free)
 
-    3) Ask for Kagle username and API key. Type in username + space + API key. Don't include quotation marks or extra spaces. It will be space deliminated and split at spaces.
+    3) Ask for Kagle username and API key. Type in username + space + API key. Don't include quotation marks or extra spaces. It will be space deliminated and split at spaces. On future runs, it will only ask for the password to decrypt the API keys.
 
     4) It will then download the data, preprocess it into a more space efficient format, and do tokenization on the text corpi using fasttext.
 
