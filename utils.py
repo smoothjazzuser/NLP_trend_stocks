@@ -620,6 +620,7 @@ class create_triplets():
         model_siamese.fit(triplets.generator(), steps_per_epoch=triplets.num_batches, epochs=10)
         """
     def __init__(self, x:np.array, y:np.array, batch_size:int=32, shuffle:bool=True, seed:int=42):
+        self.rng = np.random.default_rng(seed=seed)
         self.x = x
         self.y = y
         self.batch_size = batch_size
@@ -637,7 +638,7 @@ class create_triplets():
         if seed != None: np.random.seed(self.seed)
 
         if self.shuffle:
-            np.random.shuffle(self.indices)
+            self.rng.shuffle(self.indices)
             self.class_indices = [self.indices[x] for x in self.class_indices]
 
     def __iter__(self):
@@ -653,18 +654,18 @@ class create_triplets():
 
     def get_batch(self): #TODO: add multiprocessing and background workers to speed this up
         # randomly select two classes
-        class1 = np.random.choice(self.num_classes, self.batch_size, replace=True)
+        class1 = self.rng.choice(self.num_classes, self.batch_size, replace=True)
 
-        class2 = np.random.choice(self.num_classes, self.batch_size, replace=True)
+        class2 = self.rng.choice(self.num_classes, self.batch_size, replace=True)
         if np.any(class1 == class2):
             for i in range(self.batch_size):
                 while class2[i] == class1[i]:
-                    class2[i] = np.random.randint(self.num_classes)
+                    class2[i] = self.rng.integers(self.num_classes)
 
         # randomly select batch examples from each class
-        examples1 = [np.random.randint(self.num_examples_per_class[class1[i]]) for i in range(self.batch_size)]
-        examples2 = [np.random.randint(self.num_examples_per_class[class1[i]]) for i in range(self.batch_size)]
-        examples3 = [np.random.randint(self.num_examples_per_class[class2[i]]) for i in range(self.batch_size)]
+        examples1 = [self.rng.integers(self.num_examples_per_class[class1[i]]) for i in range(self.batch_size)]
+        examples2 = [self.rng.integers(self.num_examples_per_class[class1[i]]) for i in range(self.batch_size)]
+        examples3 = [self.rng.integers(self.num_examples_per_class[class2[i]]) for i in range(self.batch_size)]
         
         # get the indices for the examples
         indexes1 = [self.class_indices[class1[i]][examples1[i]] for i in range(self.batch_size)]
