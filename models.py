@@ -64,7 +64,7 @@ def siamese_model(hp):
             activation=activations[i],
             activity_regularizer=activity_regularizer[i],
             weight_regularizer=weight_regularizer[i],
-            kernel_regularizer=weight_regularizer[i]
+            kernel_regularizer=kernel_regularizer[i]
         ))
     
     vec1 = shared_weights(inp1)
