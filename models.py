@@ -43,16 +43,16 @@ def siamese_model(hp):
     neuron_sizes_2nd = np.linspace(neurons_middle, neurons_end, num_layers, dtype=int) # interpolate second half of layers sizes
     neuron_sizes = list(set(neuron_sizes_1st).union(set(neuron_sizes_2nd))) # take the union of the two sets of layer sizes
     
-    if activity_regularizer != 'None':
-        activity_regularizer = getattr(keras.regularizers, activity_regularizer)
-    if bias_regularizer != 'None':
-        bias_regularizer = getattr(keras.regularizers, bias_regularizer)
-    if kernel_regularizer != 'None':
-        kernel_regularizer = getattr(keras.regularizers, kernel_regularizer)
-    if kernel_constraint != 'None':
-        kernel_constraint = getattr(keras.constraints, kernel_constraint)
-    if bias_constraint != 'None':
-        bias_constraint = getattr(keras.constraints, bias_constraint)
+    if activity_regularizer != 'None': activity_regularizer = getattr(keras.regularizers, activity_regularizer)
+    else: activity_regularizer = None
+    if bias_regularizer != 'None': bias_regularizer = getattr(keras.regularizers, bias_regularizer)
+    else: bias_regularizer = None
+    if kernel_regularizer != 'None': kernel_regularizer = getattr(keras.regularizers, kernel_regularizer)
+    else: kernel_regularizer = None
+    if kernel_constraint != 'None': kernel_constraint = getattr(keras.constraints, kernel_constraint)
+    else: kernel_constraint = None
+    if bias_constraint != 'None': bias_constraint = getattr(keras.constraints, bias_constraint)
+    else: bias_constraint = None
 
     activity_regularizer = [activity_regularizer] * (num_layers - 1) + [None]
     bias_regularizer = [bias_regularizer] * (num_layers - 1) + [None]
