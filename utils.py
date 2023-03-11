@@ -647,7 +647,6 @@ class create_triplets():
     def __next__(self):
         if self.index >= self.num_batches:
             self.index = 0
-            self.rng = np.random.default_rng(seed=self.seed)
             raise StopIteration
         else:
             self.index += 1
@@ -683,6 +682,3 @@ class create_triplets():
         self.rng = np.random.default_rng(seed=self.seed)
         while True:
             yield self.get_batch()
-
-    def __getitem__(self, index):
-        return self.get_batch()
