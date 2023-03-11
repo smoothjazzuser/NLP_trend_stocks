@@ -21,13 +21,16 @@ def siamese_model(hp):
     Set of hyperperameters and neural architechure to tune
     """
     
+    activity_regularizer = hp.Choice('activity_regularizer', ['None', 'l1', 'l2'])
+    weight_regularizer = hp.Choice('weight_regularizer', ['None', 'l1', 'l2'])
+    kernel_regularizer = hp.Choice('kernel_regularizer', ['None', 'l1', 'l2'])
     activation = hp.Choice('activation',             ['gelu', 'selu', 'tanh', 'softplus', 'swish'])
     activation_first = hp.Choice('activation_first', ['gelu', 'selu', 'tanh', 'softplus', 'swish']) 
-    activation_head = hp.Choice('activation_last',   ['gelu', 'tanh', 'selu', 'softplus', 'swish']) 
+    activation_head = hp.Choice('activation_last',   ['gelu', 'selu', 'tanh', 'softplus', 'swish'])  
     learning_rate = 0.001
     num_layers = 7
-    neurons_start = hp.Int('neurons_start', 64, 120, step=2) # steps based in the range of the best hyperparameters from a previous courser run
-    neurons_middle = hp.Int('neurons_middle', 120, 240, step=3)
+    neurons_start = hp.Int('neurons_start', 64, 120, step=4) # steps based in the range of the best hyperparameters from a previous courser run
+    neurons_middle = hp.Int('neurons_middle', 120, 240, step=4)
     neurons_end = hp.Int('neurons_end', 120, 300, step=4)
 
     """
@@ -38,6 +41,15 @@ def siamese_model(hp):
     neuron_sizes_2nd = np.linspace(neurons_middle, neurons_end, num_layers, dtype=int) # interpolate second half of layers sizes
     neuron_sizes = list(set(neuron_sizes_1st).union(set(neuron_sizes_2nd))) # take the union of the two sets of layer sizes
     activations = [activation_first] + [activation] * (num_layers - 2) + [activation_head] 
+    if activity_regularizer != 'None':
+        activity_regularizer = getattr(keras.regularizers, activity_regularizer)
+    if weight_regularizer != 'None':
+        weight_regularizer = getattr(keras.regularizers, weight_regularizer)
+    if kernel_regularizer != 'None':
+        kernel_regularizer = getattr(keras.regularizers, kernel_regularizer)
+    activity_regularizer = [activity_regularizer] * (num_layers - 1) + [None]
+    weight_regularizer = [weight_regularizer] * (num_layers - 1) + [None]
+    kernel_regularizer = [kernel_regularizer] * (num_layers - 1) + [None]
 
 
     inp1 = layers.Input(shape=x_shape)
@@ -47,7 +59,13 @@ def siamese_model(hp):
     # create the shared weights
     shared_weights = models.Sequential()
     for i in range(num_layers):
-        shared_weights.add(layers.Dense(neuron_sizes[i], activation=activations[i]))
+        shared_weights.add(layers.Dense(
+            neuron_sizes[i], 
+            activation=activations[i],
+            activity_regularizer=activity_regularizer[i],
+            kernel_regularizer=kernel_regularizer[i],
+            kernel_regularizer=weight_regularizer[i]
+        ))
     
     vec1 = shared_weights(inp1)
     vec2 = shared_weights(inp2)
