@@ -63,7 +63,7 @@ def siamese_model(hp):
             neuron_sizes[i], 
             activation=activations[i],
             activity_regularizer=activity_regularizer[i],
-            kernel_regularizer=kernel_regularizer[i],
+            weight_regularizer=weight_regularizer[i],
             kernel_regularizer=weight_regularizer[i]
         ))
     
