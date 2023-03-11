@@ -21,11 +21,15 @@ def siamese_model(hp):
     Set of hyperperameters and neural architechure to tune
     """
     
-    activity_regularizer = hp.Choice('activity_regularizer', ['None', 'l1', 'l2'])
-    bias_regularizer = hp.Choice('bias_regularizer', ['None', 'l1', 'l2'])
-    kernel_regularizer = hp.Choice('kernel_regularizer', ['None', 'l1', 'l2'])
-    kernel_constraint = hp.Choice('kernel_constraint', ['None', 'max_norm', 'min_max_norm', 'non_neg', 'unit_norm', 'unitwise_norm'])
-    bias_constraint = hp.Choice('bias_constraint', ['None', 'max_norm', 'min_max_norm', 'non_neg', 'unit_norm', 'unitwise_norm'])
+    activity_regularizer = hp.Choice('activity_regularizer', [True, False])
+    bias_regularizer = hp.Choice('bias_regularizer', [True, False])
+    kernel_regularizer = hp.Choice('kernel_regularizer', [True, False])
+    kernel_constraint = hp.Choice('kernel_constraint', [True, False])
+    bias_constraint = hp.Choice('bias_constraint', [True, False])
+    reg_level = hp.Choice('reg_level', [0.01, 0.001, 0.0001])
+    constraint_max = hp.Choice('constraint_max', [0.1, 0.5, 1.0, 2.0, 3.0])
+    constraint_min = hp.Choice('constraint_min', [0.0, 0.05, 0.1])
+    constraint_rate = hp.Choice('constraint_rate', [0.05, 0.1, 0.5, 0.8, 1.0])
     activation = hp.Choice('activation',             ['gelu', 'selu', 'tanh', 'softplus', 'swish'])
     activation_first = hp.Choice('activation_first', ['gelu', 'selu', 'tanh', 'softplus', 'swish']) 
     activation_head = hp.Choice('activation_last',   ['gelu', 'selu', 'tanh', 'softplus', 'swish'])  
@@ -42,25 +46,19 @@ def siamese_model(hp):
     neuron_sizes_1st = np.linspace(neurons_start, neurons_middle, num_layers, dtype=int) # interpolate first half of layers sizes
     neuron_sizes_2nd = np.linspace(neurons_middle, neurons_end, num_layers, dtype=int) # interpolate second half of layers sizes
     neuron_sizes = list(set(neuron_sizes_1st).union(set(neuron_sizes_2nd))) # take the union of the two sets of layer sizes
-    
-    if activity_regularizer != 'None': activity_regularizer = getattr(keras.regularizers, activity_regularizer)
+
+    activations = [activation_first] + [activation] * (num_layers - 2)
+
+    if activity_regularizer: activity_regularizer = tf.keras.regularizers.L2(reg_level)
     else: activity_regularizer = None
-    if bias_regularizer != 'None': bias_regularizer = getattr(keras.regularizers, bias_regularizer)
+    if bias_regularizer: bias_regularizer = tf.keras.regularizers.L2(reg_level)
     else: bias_regularizer = None
-    if kernel_regularizer != 'None': kernel_regularizer = getattr(keras.regularizers, kernel_regularizer)
+    if kernel_regularizer: kernel_regularizer = tf.keras.regularizers.L2(reg_level)
     else: kernel_regularizer = None
-    if kernel_constraint != 'None': kernel_constraint = getattr(keras.constraints, kernel_constraint)
+    if kernel_constraint: kernel_constraint = tf.keras.constraints.MinMaxNorm(constraint_max, constraint_min)
     else: kernel_constraint = None
-    if bias_constraint != 'None': bias_constraint = getattr(keras.constraints, bias_constraint)
+    if bias_constraint: bias_constraint = tf.keras.constraints.MinMaxNorm(constraint_max, constraint_min)
     else: bias_constraint = None
-
-    activity_regularizer = [activity_regularizer] * (num_layers - 1) + [None]
-    bias_regularizer = [bias_regularizer] * (num_layers - 1) + [None]
-    kernel_regularizer = [kernel_regularizer] * (num_layers - 1) + [None]
-    kernel_constraint = [kernel_constraint] * (num_layers - 1) + [None]
-    bias_constraint = [bias_constraint] * (num_layers - 1) + [None]
-    activations = [activation_first] + [activation] * (num_layers - 2) + [activation_head] 
-
 
 
     inp1 = layers.Input(shape=x_shape)
@@ -70,16 +68,19 @@ def siamese_model(hp):
     # create the shared weights
     shared_weights = models.Sequential()
     for i in range(num_layers):
-        shared_weights.add(layers.Dense(
-            neuron_sizes[i], 
-            activation=activations[i],
-            activity_regularizer=activity_regularizer[i],
-            bias_regularizer=bias_regularizer[i],
-            kernel_regularizer=kernel_regularizer[i],
-            kernel_constraint=kernel_constraint[i],
-            bias_constraint=bias_constraint[i],
-            use_bias=True,
-        ))
+        if i == num_layers - 1:
+            shared_weights.add(layers.Dense(neuron_sizes[i], activation=activation_head, use_bias=True))
+        else:
+            shared_weights.add(layers.Dense(
+                neuron_sizes[i], 
+                activation=activations[i],
+                activity_regularizer=activity_regularizer,
+                bias_regularizer=bias_regularizer,
+                kernel_regularizer=kernel_regularizer,
+                kernel_constraint=kernel_constraint,
+                bias_constraint=bias_constraint,
+                use_bias=True,
+            ))
     
     vec1 = shared_weights(inp1)
     vec2 = shared_weights(inp2)
