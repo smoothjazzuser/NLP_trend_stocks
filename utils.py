@@ -20,7 +20,7 @@ pd.set_option('io.parquet.engine', 'pyarrow')
 import fasttext
 import fasttext.util
 
-def download_datasets(url:str, unzip:bool=True, delete_zip:bool=True, files_to_move:dict = {}, delete=False, dest_name:str = None, verbose:bool = True):
+def download_dataset(url:str, unzip:bool=True, delete_zip:bool=True, files_to_move:dict = {}, delete=False, dest_name:str = None, verbose:bool = True):
     """Downloads the datasets from kaggle using the official kaggle api.
     
     See this forumn for more information, as the official documentation is lacking:
@@ -682,3 +682,56 @@ class create_triplets():
         self.rng = np.random.default_rng(seed=self.seed)
         while True:
             yield self.get_batch()
+
+def get_datasets(kaggle_api_key, data_nasdaq_key):
+    username, password = kaggle_api_key.split(' ')
+    os.environ['KAGGLE_USERNAME'] = username
+    os.environ['KAGGLE_KEY'] = password
+    os.environ['KAGGLE_CONFIG_DIR'] = os.getcwd()
+
+    # download the various kaggle datasets
+    download_dataset(
+            'https://www.kaggle.com/datasets/sarthmirashi07/us-macroeconomic-data', 
+            kaggle_api_key, 
+            files_to_move={'US_macroeconomics.csv': 'macro/US_macroeconomics.csv'},
+            delete=True,
+            dest_name='Macro')
+
+    download_dataset(
+            'https://www.kaggle.com/datasets/footballjoe789/us-stock-dataset', 
+            kaggle_api_key, 
+            files_to_move={'us-stock-dataset/Data/Stocks': 'Stocks', 'us-stock-dataset/Stock_List.csv': 'Stock_List.csv'}, 
+            delete=True,
+            dest_name='Stocks')
+
+    download_dataset(
+            'https://www.kaggle.com/datasets/mathurinache/goemotions',
+            kaggle_api_key,
+            files_to_move={'goemotions.csv': 'Emotions/goemotions.csv'},
+            delete=True,
+            dest_name='Emotions')
+
+    download_dataset(
+            'https://www.kaggle.com/datasets/parulpandey/emotion-dataset',
+            kaggle_api_key,
+            files_to_move={'training.csv': 'Emotions/training.csv', 'validation.csv': 'Emotions/validation.csv', 'test.csv': 'Emotions/test.csv'},
+            delete=True,
+            dest_name='Emotions')
+
+    download_dataset(
+            'https://www.kaggle.com/datasets/kosweet/cleaned-emotion-extraction-dataset-from-twitter',
+            kaggle_api_key,
+            files_to_move={'dataset(clean).csv': 'Emotions/dataset(clean).csv'},
+            delete=True,
+            dest_name='Emotions')
+
+    download_dataset(
+            'https://www.kaggle.com/datasets/miguelaenlle/massive-stock-news-analysis-db-for-nlpbacktests',
+            kaggle_api_key,
+            files_to_move={'raw_partner_headlines.csv': 'Text/raw_partner_headlines.csv', 'raw_analyst_ratings.csv': 'Text/raw_analyst_ratings.csv', 'analyst_ratings_processed.csv': 'Text/analyst_ratings_processed.csv'},
+            delete=True,
+            dest_name='Text')
+
+    # clear the username and key from the environment variables
+    os.environ['KAGGLE_USERNAME'] = "" 
+    os.environ['KAGGLE_KEY'] = ""

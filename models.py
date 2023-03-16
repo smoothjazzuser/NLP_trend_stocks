@@ -14,20 +14,20 @@ def triplet_loss(dist1, dist2, dist3):
     return loss
     
 
-def siamese_model(hp):
+def siamese_model_dense(hp):
     """
     Set of hyperperameters and neural architechure to tune
     """
     x_shape, label_shape = ((300,), (29,))
 
-    activation = 'gelu'
-    activation_first = 'selu'
-    activation_head = 'gelu'
-    learning_rate = 0.001
-    num_layers = 7
-    neurons_start = hp.Int('neurons_start', 72 - 24, 72 + 24, step=2) #72
-    neurons_middle = hp.Int('neurons_middle', 168 - 42, 168 + 42, step=2) # 168
-    neurons_end = hp.Int('neurons_end', 224 - 42, 224 + 42, step=2) # 224
+    activation = hp.Choice('activation', ['selu', 'gelu', 'tanh', 'sigmoid'], default='gelu')
+    activation_first = hp.Choice('activation_first', ['selu', 'gelu', 'tanh', 'sigmoid'], default='selu')
+    activation_head = hp.Choice('activation_head', ['selu', 'gelu', 'tanh', 'sigmoid'], default='selu')
+    learning_rate = hp.Choice('learning_rate', [1e-2, 1e-3, 1e-4, 1e-5, 1e-6])
+    num_layers = hp.Int('num_layers', 2, 10, step=1, default=7)
+    neurons_start = hp.Int('neurons_start', 32, 256, step=8, default=72)
+    neurons_middle = hp.Int('neurons_middle', 32, 256, step=8, default=128)
+    neurons_end = hp.Int('neurons_end', 32, 256, step=8, default=128)
 
     """
     Generally in models, the number of neurons in each layer is increasing or decreasing (with a possible change around the midpoint of the model)
