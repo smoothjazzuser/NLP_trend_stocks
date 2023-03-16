@@ -18,6 +18,7 @@ def siamese_model_dense(hp):
     """
     Set of hyperperameters and neural architechure to tune
     """
+    tf.random.set_seed(0)
     x_shape, label_shape = ((300,), (29,))
 
     batch_norm_outputs = hp.Choice('batch_norm_outputs', [True, False], default=False)
@@ -66,8 +67,8 @@ def siamese_model_dense(hp):
             shared_weights.add(layers.Dense(neuron_sizes[i], activation=activation_head, use_bias=True))
         else:
             if i > 0:
-                if dropout > 0: shared_weights.add(layers.Dropout(dropout), seed=42)
-                if gaussian_noise > 0: shared_weights.add(layers.GaussianNoise(gaussian_noise), seed=42)
+                if dropout > 0: shared_weights.add(layers.Dropout(dropout))
+                if gaussian_noise > 0: shared_weights.add(layers.GaussianNoise(gaussian_noise))
                 if batch_norm_layers: shared_weights.add(layers.BatchNormalization())
             shared_weights.add(layers.Dense(
                 neuron_sizes[i], 
