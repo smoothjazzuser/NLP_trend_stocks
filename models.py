@@ -22,7 +22,7 @@ def siamese_model_dense(hp):
     x_shape, label_shape = ((300,), (29,))
 
     batch_norm_outputs = hp.Choice('batch_norm_outputs', [True, False], default=False)
-    batch_norm_layers = hp.Choice('batch_norm_layers', [True, False], default=False)
+    batch_norm_first_layers = hp.Choice('batch_norm_first_layers', [True, False], default=False)
     dropout = hp.Choice('dropout', [0.0, 0.1, 0.2, 0.3, 0.4, 0.5], default=0.0)
     activity_regularizer_level = hp.Choice('activity_regularizer_level', [0.0, 0.0001, 0.001, 0.01, 0.1, 1.0], default=0.0)
     bias_regularizer_level = hp.Choice('bias_regularizer_level', [0.0, 0.0001, 0.001, 0.01, 0.1, 1.0], default=0.0)
@@ -69,7 +69,6 @@ def siamese_model_dense(hp):
             if i > 0:
                 if dropout > 0: shared_weights.add(layers.Dropout(dropout))
                 if gaussian_noise > 0: shared_weights.add(layers.GaussianNoise(gaussian_noise))
-                if batch_norm_layers: shared_weights.add(layers.BatchNormalization())
             shared_weights.add(layers.Dense(
                 neuron_sizes[i], 
                 activation=activations[i],
@@ -79,6 +78,8 @@ def siamese_model_dense(hp):
                 kernel_regularizer=tf.keras.regularizers.l2(kernel_regularizer_level),
                 activity_regularizer=tf.keras.regularizers.l2(activity_regularizer_level)
             ))
+            if i == 0 and batch_norm_first_layers: 
+                shared_weights.add(layers.BatchNormalization())
     
     vec1 = shared_weights(inp1)
     vec2 = shared_weights(inp2)

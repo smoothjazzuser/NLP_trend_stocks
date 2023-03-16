@@ -626,7 +626,6 @@ class create_triplets():
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.seed = seed
-        self.index = 0
         self.indices = np.arange(self.x.shape[0])
         self.num_classes = self.y.shape[1]
         self.class_indices = [np.where(self.y[:,i] == 1)[0] for i in range(self.num_classes)] # this is the indices for all the examples in each class
@@ -643,14 +642,6 @@ class create_triplets():
 
     def __iter__(self):
         return self
-
-    def __next__(self):
-        if self.index >= self.num_batches:
-            self.index = 0
-            raise StopIteration
-        else:
-            self.index += 1
-            return self.get_batch()
 
     def get_batch(self): #TODO: add multiprocessing and background workers to speed this up
         # randomly select two classes
