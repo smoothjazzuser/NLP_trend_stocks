@@ -20,6 +20,15 @@ def siamese_model_dense(hp):
     """
     x_shape, label_shape = ((300,), (29,))
 
+    batch_norm_outputs = hp.Choice('batch_norm_outputs', [True, False], default=False)
+    batch_norm_layers = hp.Choice('batch_norm_layers', [True, False], default=False)
+    dropout = hp.Choice('dropout', [0.0, 0.1, 0.2, 0.3, 0.4, 0.5], default=0.0)
+    activity_regularizer_level = hp.Choice('activity_regularizer_level', [0.0, 0.0001, 0.001, 0.01, 0.1, 1.0], default=0.0)
+    bias_regularizer_level = hp.Choice('bias_regularizer_level', [0.0, 0.0001, 0.001, 0.01, 0.1, 1.0], default=0.0)
+    kernel_regularizer_level = hp.Choice('kernel_regularizer_level', [0.0, 0.0001, 0.001, 0.01, 0.1, 1.0], default=0.0)
+    gaussian_noise = hp.Choice('gaussian_noise', [0.0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5], default=0.0)
+    kernel_constraint_max = hp.Choice('kernel_constraint_max', ["None", "1.0", "2.0", "3.0", "4.0", "5.0"], default="None")
+    kernel_constraint_min = hp.Choice('kernel_constraint_min', ["None", "0.05", "0.01", "0.0", "-1.0", "-2.0"], default="None")
     activation = hp.Choice('activation', ['selu', 'gelu', 'tanh', 'sigmoid'], default='gelu')
     activation_first = hp.Choice('activation_first', ['selu', 'gelu', 'tanh', 'sigmoid'], default='selu')
     activation_head = hp.Choice('activation_head', ['selu', 'gelu', 'tanh', 'sigmoid'], default='selu')
@@ -29,14 +38,19 @@ def siamese_model_dense(hp):
     neurons_middle = hp.Int('neurons_middle', 32, 256, step=8, default=128)
     neurons_end = hp.Int('neurons_end', 32, 256, step=8, default=128)
 
-    """
-    Generally in models, the number of neurons in each layer is increasing or decreasing (with a possible change around the midpoint of the model)
-    # Here we will calculate the number of neurons in each layer and the activation function for each layer based on the trends set by the hyperparameters
-    """
+    if kernel_constraint_max == "None" and kernel_constraint_min == "None":
+        kernel_constraint = None
+    elif kernel_constraint_max == "None":
+        kernel_constraint = tf.keras.constraints.MinMaxNorm(min_value=float(kernel_constraint_min), max_value=100.0)
+    elif kernel_constraint_min == "None":
+        kernel_constraint = tf.keras.constraints.MinMaxNorm(max_value=float(kernel_constraint_max), min_value=-100.0)
+    else:
+        kernel_constraint = tf.keras.constraints.MinMaxNorm(min_value=float(kernel_constraint_min), max_value=float(kernel_constraint_max))
+    
+    
     neuron_sizes_1st = np.linspace(neurons_start, neurons_middle, num_layers, dtype=int) # interpolate first half of layers sizes
     neuron_sizes_2nd = np.linspace(neurons_middle, neurons_end, num_layers, dtype=int) # interpolate second half of layers sizes
     neuron_sizes = list(set(neuron_sizes_1st).union(set(neuron_sizes_2nd))) # take the union of the two sets of layer sizes
-
     activations = [activation_first] + [activation] * (num_layers - 2)
 
 
@@ -48,12 +62,21 @@ def siamese_model_dense(hp):
     shared_weights = models.Sequential()
     for i in range(num_layers):
         if i == num_layers - 1:
+            if batch_norm_outputs: shared_weights.add(layers.BatchNormalization())
             shared_weights.add(layers.Dense(neuron_sizes[i], activation=activation_head, use_bias=True))
         else:
+            if i > 0:
+                if dropout > 0: shared_weights.add(layers.Dropout(dropout), seed=42)
+                if gaussian_noise > 0: shared_weights.add(layers.GaussianNoise(gaussian_noise), seed=42)
+                if batch_norm_layers: shared_weights.add(layers.BatchNormalization())
             shared_weights.add(layers.Dense(
                 neuron_sizes[i], 
                 activation=activations[i],
                 use_bias=True,
+                kernel_constraint=kernel_constraint,
+                bias_regularizer=tf.keras.regularizers.l2(bias_regularizer_level),
+                kernel_regularizer=tf.keras.regularizers.l2(kernel_regularizer_level),
+                activity_regularizer=tf.keras.regularizers.l2(activity_regularizer_level)
             ))
     
     vec1 = shared_weights(inp1)
