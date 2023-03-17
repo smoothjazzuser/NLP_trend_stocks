@@ -20,7 +20,7 @@ pd.set_option('io.parquet.engine', 'pyarrow')
 import fasttext
 import fasttext.util
 
-def download_dataset(url:str, unzip:bool=True, delete_zip:bool=True, files_to_move:dict = {}, delete=False, dest_name:str = None, verbose:bool = True):
+def download_dataset(url:str, unzip:bool=True, delete_zip:bool=True, files_to_move:dict = {}, delete=False, dest_name:str = None, verbose:bool = True, min_files_expected=1):
     """Downloads the datasets from kaggle using the official kaggle api.
     
     See this forumn for more information, as the official documentation is lacking:
@@ -36,9 +36,13 @@ def download_dataset(url:str, unzip:bool=True, delete_zip:bool=True, files_to_mo
     if delete_zip:
         for file in glob('data/*.zip'):
             os.remove(file)
-        
-    if not list(files_to_move.values())[0].split('/')[-1].split('.')[0] in [file.split('\\')[-1].split('.')[0] for file in glob('data/*/*')] +  [file.split('\\')[-1].split('.')[0] for file in glob('data/*/*/*')] + [file.split('\\')[-1].split('.')[0] for file in glob('data/*')]:
 
+    
+
+    aquire_files_needed = True if len(glob(f'data/{dest_name}/*.parquet')) < min_files_expected else False
+    
+    # if any requested files are not in the folder, download the dataset
+    if aquire_files_needed:
         api.dataset_download_files(url, path='data/', unzip=unzip, quiet=not verbose)
 
         for k, v in files_to_move.items():
@@ -59,8 +63,8 @@ def download_dataset(url:str, unzip:bool=True, delete_zip:bool=True, files_to_mo
 
     # the above function does not remove/transfer files from the folder 'data/Data' correctly, so we need to do it manually
     if os.path.exists('data\Data\Stocks'):
-        os.removedirs('data/Stocks')
-        os.rename('data/Data/Stocks', 'data/Stocks')
+        os.removedirs('data/Stock')
+        os.rename('data/Data/Stocks', 'data/Stock')
         rmtree('data/Data')
 
     # convert the files to parquet format, which is a much better for this project
@@ -347,7 +351,7 @@ class get_macroeconomic_data ():
         pass
 class aquire_stock_search_terms():
     """A work-in-progress. Goal is to take stock ticker symbols and return a list of search terms for NLP web scraping. Officers, affiliated companies, company name, etc."""
-    def __init__(self, file_path = 'data/Stocks/', file_ext = '.parquet'):
+    def __init__(self, file_path = 'data/Stock/', file_ext = '.parquet'):
         self.file_path = file_path
         self.file_ext = file_ext
 
@@ -548,17 +552,17 @@ class aquire_stock_search_terms():
         
     def verify_dataset_downloaded(self):
         error = ""
-        directions = "\n Please ensure that you have downloaded the stock data first from https://www.kaggle.com/datasets/footballjoe789/us-stock-dataset. \n Then extract Stocks/ to the data/ folder and move Stock_List to data/. \n Then run this script again. \n Thank you. \n"
+        directions = "\n Please ensure that you have downloaded the stock data first from https://www.kaggle.com/datasets/footballjoe789/us-stock-dataset. \n Then extract Stock/ to the data/ folder and move Stock_List to data/. \n Then run this script again. \n Thank you. \n"
 
         if os.path.exists("data/Stock_List.parquet") == False:
             error = "data/Stock_List.parquet is missing. "
 
-        if os.path.exists("data/Stocks/"):
-            files_found = len(glob("data/Stocks/*"))
+        if os.path.exists("data/Stock/"):
+            files_found = len(glob("data/Stock/*"))
             if files_found == 0:
-                error = "No stock data found in data/Stocks/ folder. "
+                error = "No stock data found in data/Stock/ folder. "
         else:
-            error = "data/Stocks/ folder is missing. "
+            error = "data/Stock/ folder is missing. "
         
         if error != "":
             print(error + directions)
@@ -595,7 +599,7 @@ def get_emotion_df():
     return emotion_df
 
 class create_triplets():
-    """Converts (x,y) to (x1,x2,x3) where x1 and x2 are positive examples and x3 is a negative example. 
+    """Converts (x,y) to (anchor,positive,negative) where anchor and positive are positive examples and negative is a negative example. 
     
     This will also randomly select two random classes to select the positive and negative examples from.
     
@@ -609,10 +613,10 @@ class create_triplets():
         seed: int, the seed to use for the random number generator
         
     Returns:
-        x1: np.array of shape (batch_size, x_shape)
-        x2: np.array of shape (batch_size, x_shape)
-        x3: np.array of shape (batch_size, x_shape)
-        label1: np.array of shape (batch_size, num_classes)
+        anchor: np.array of shape (batch_size, x_shape)
+        positive: np.array of shape (batch_size, x_shape)
+        negative: np.array of shape (batch_size, x_shape)
+        anchor_class: np.array of shape (batch_size, num_classes)
         
     Example:
         triplets = create_triplets(x, y, batch_size=32, shuffle=True, seed=42)
@@ -645,29 +649,29 @@ class create_triplets():
 
     def get_batch(self): #TODO: add multiprocessing and background workers to speed this up
         # randomly select two classes
-        class1 = self.rng.choice(self.num_classes, self.batch_size, replace=True)
+        anchor_class = self.rng.choice(self.num_classes, self.batch_size, replace=True)
 
-        class2 = self.rng.choice(self.num_classes, self.batch_size, replace=True)
-        if np.any(class1 == class2):
+        contrasting_class = self.rng.choice(self.num_classes, self.batch_size, replace=True)
+        if np.any(anchor_class == contrasting_class):
             for i in range(self.batch_size):
-                while class2[i] == class1[i]:
-                    class2[i] = self.rng.integers(self.num_classes)
+                while contrasting_class[i] == anchor_class[i]:
+                    contrasting_class[i] = self.rng.integers(self.num_classes)
 
         # randomly select batch examples from each class
-        examples1 = [self.rng.integers(self.num_examples_per_class[class1[i]]) for i in range(self.batch_size)]
-        examples2 = [self.rng.integers(self.num_examples_per_class[class1[i]]) for i in range(self.batch_size)]
-        examples3 = [self.rng.integers(self.num_examples_per_class[class2[i]]) for i in range(self.batch_size)]
+        examples_anchor = [self.rng.integers(self.num_examples_per_class[anchor_class[i]]) for i in range(self.batch_size)]
+        examples_positive = [self.rng.integers(self.num_examples_per_class[anchor_class[i]]) for i in range(self.batch_size)]
+        examples_negative = [self.rng.integers(self.num_examples_per_class[contrasting_class[i]]) for i in range(self.batch_size)]
         
         # get the indices for the examples
-        indexes1 = [self.class_indices[class1[i]][examples1[i]] for i in range(self.batch_size)]
-        indexes2 = [self.class_indices[class1[i]][examples2[i]] for i in range(self.batch_size)]
-        indexes3 = [self.class_indices[class2[i]][examples3[i]] for i in range(self.batch_size)]
+        indexes_anchor = [self.class_indices[anchor_class[i]][examples_anchor[i]] for i in range(self.batch_size)]
+        indexes_positive = [self.class_indices[anchor_class[i]][examples_positive[i]] for i in range(self.batch_size)]
+        indexes_negative = [self.class_indices[contrasting_class[i]][examples_negative[i]] for i in range(self.batch_size)]
         
-        x1 = self.x[indexes1]
-        x2 = self.x[indexes2]
-        x3 = self.x[indexes3]
+        anchor = self.x[indexes_anchor]
+        positive = self.x[indexes_positive]
+        negative = self.x[indexes_negative]
 
-        return [x1, x2, x3], class1
+        return [anchor, positive, negative], anchor_class
 
     def generator(self):
         self.rng = np.random.default_rng(seed=self.seed)
@@ -682,46 +686,57 @@ def get_datasets(kaggle_api_key, data_nasdaq_key):
 
     # download the various kaggle datasets
     download_dataset(
+            'https://www.kaggle.com/datasets/footballjoe789/us-stock-dataset', 
+            kaggle_api_key, 
+            files_to_move={'us-stock-dataset/Data/Stocks': 'Stocks'}, #, 'us-stock-dataset/Stock_List.csv': 'Stock_List.csv'
+            delete=True,
+            dest_name='Stock',
+            min_files_expected=100
+            )
+
+    download_dataset(
             'https://www.kaggle.com/datasets/sarthmirashi07/us-macroeconomic-data', 
             kaggle_api_key, 
             files_to_move={'US_macroeconomics.csv': 'macro/US_macroeconomics.csv'},
             delete=True,
-            dest_name='Macro')
-
-    download_dataset(
-            'https://www.kaggle.com/datasets/footballjoe789/us-stock-dataset', 
-            kaggle_api_key, 
-            files_to_move={'us-stock-dataset/Data/Stocks': 'Stocks', 'us-stock-dataset/Stock_List.csv': 'Stock_List.csv'}, 
-            delete=True,
-            dest_name='Stocks')
+            dest_name='Macro',
+            min_files_expected=1
+            )
 
     download_dataset(
             'https://www.kaggle.com/datasets/mathurinache/goemotions',
             kaggle_api_key,
             files_to_move={'goemotions.csv': 'Emotions/goemotions.csv'},
             delete=True,
-            dest_name='Emotions')
+            dest_name='Emotions',
+            min_files_expected=1
+            )
 
     download_dataset(
             'https://www.kaggle.com/datasets/parulpandey/emotion-dataset',
             kaggle_api_key,
             files_to_move={'training.csv': 'Emotions/training.csv', 'validation.csv': 'Emotions/validation.csv', 'test.csv': 'Emotions/test.csv'},
             delete=True,
-            dest_name='Emotions')
+            dest_name='Emotions',
+            min_files_expected=3
+            )
 
     download_dataset(
             'https://www.kaggle.com/datasets/kosweet/cleaned-emotion-extraction-dataset-from-twitter',
             kaggle_api_key,
             files_to_move={'dataset(clean).csv': 'Emotions/dataset(clean).csv'},
             delete=True,
-            dest_name='Emotions')
+            dest_name='Emotions',
+            min_files_expected=1
+            )
 
     download_dataset(
             'https://www.kaggle.com/datasets/miguelaenlle/massive-stock-news-analysis-db-for-nlpbacktests',
             kaggle_api_key,
             files_to_move={'raw_partner_headlines.csv': 'Text/raw_partner_headlines.csv', 'raw_analyst_ratings.csv': 'Text/raw_analyst_ratings.csv', 'analyst_ratings_processed.csv': 'Text/analyst_ratings_processed.csv'},
             delete=True,
-            dest_name='Text')
+            dest_name='Text',
+            min_files_expected=3)
 
     # clear the username and key from the environment variables
     os.environ['KAGGLE_USERNAME'] = "" 
