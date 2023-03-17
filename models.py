@@ -6,12 +6,34 @@ from tensorflow.keras import layers, models, preprocessing, callbacks, optimizer
 import numpy as np
 
 
-def triplet_loss(dist1, dist2, dist3):
+def triplet_loss(anchor, positive, negative, type='contrastive', margin=0.2, normalize=False):
     """Calculate the triplet loss. Minimize positive_dist and maximize negative_dist."""
-    positive_dist = tf.abs(dist1 - dist2)
-    negative_dist = tf.abs(dist1 - dist3)
-    loss = tf.reduce_mean(tf.maximum(0.0, 0.2 + positive_dist - negative_dist))
-    return loss
+    if normalize:
+        max_ = tf.math.maximum(tf.math.maximum(tf.reduce_max(anchor), tf.reduce_max(positive)), tf.reduce_max(negative))
+        min_ = tf.math.minimum(tf.math.minimum(tf.reduce_min(anchor), tf.reduce_min(positive)), tf.reduce_min(negative))
+        anchor = (anchor - min_) / (max_ - min_)
+        positive = (positive - min_) / (max_ - min_)
+        negative = (negative - min_) / (max_ - min_)
+
+    if type == 'abs':
+        positive_dist =  tf.reduce_sum(tf.abs(anchor - positive), axis=1)
+        negative_dist =  tf.reduce_sum(tf.abs(anchor - negative), axis=1)    
+        loss = tf.maximum(0.0, margin + positive_dist - negative_dist)
+
+    elif type == 'square':
+        positive_dist = tf.reduce_sum(tf.square(anchor - positive), axis=1)
+        negative_dist = tf.reduce_sum(tf.square(anchor - negative), axis=1)
+        loss = tf.maximum(0.0, margin + positive_dist - negative_dist)
+
+    elif type == 'contrastive':
+        pos_cos = losses.cosine_similarity(anchor, positive)
+        neg_cos = losses.cosine_similarity(anchor, negative)
+        dist = tf.reduce_sum(neg_cos - pos_cos)
+
+        # In this function, a higher x means a higher loss. Negatives tend towards a limit of zero
+        loss = tf.math.log(1 + tf.exp(dist))
+
+    return tf.reduce_mean(loss)
     
 
 def siamese_model_dense(hp):
@@ -22,7 +44,7 @@ def siamese_model_dense(hp):
     x_shape, label_shape = ((300,), (29,))
 
     batch_norm_outputs = hp.Choice('batch_norm_outputs', [True, False], default=False)
-    batch_norm_first_layers = hp.Choice('batch_norm_first_layers', [True, False], default=False)
+    batch_norm_layers = hp.Choice('batch_norm_layers', [False, True], default=False)
     dropout = hp.Choice('dropout', [0.0, 0.1, 0.2, 0.3, 0.4, 0.5], default=0.0)
     activity_regularizer_level = hp.Choice('activity_regularizer_level', [0.0, 0.0001, 0.001, 0.01, 0.1, 1.0], default=0.0)
     bias_regularizer_level = hp.Choice('bias_regularizer_level', [0.0, 0.0001, 0.001, 0.01, 0.1, 1.0], default=0.0)
@@ -38,6 +60,23 @@ def siamese_model_dense(hp):
     neurons_start = hp.Int('neurons_start', 32, 256, step=8, default=72)
     neurons_middle = hp.Int('neurons_middle', 32, 256, step=8, default=128)
     neurons_end = hp.Int('neurons_end', 32, 256, step=8, default=128)
+    # batch_norm_outputs = True
+    # batch_norm_layers = False
+    # dropout = 0.0
+    # activity_regularizer_level = 0.0
+    # bias_regularizer_level = 0.0
+    # kernel_regularizer_level = 0.0
+    # gaussian_noise = 0.0
+    # kernel_constraint_max = "None"
+    # kernel_constraint_min = "None"
+    # activation = 'gelu'
+    # activation_first = 'selu'
+    # activation_head = 'selu'
+    # learning_rate = 1e-6
+    # num_layers = 7
+    # neurons_start = 72
+    # neurons_middle = 128
+    # neurons_end = hp.Choice('neurons_end', [32, 64])
 
     if kernel_constraint_max == "None" and kernel_constraint_min == "None":
         kernel_constraint = None
@@ -55,9 +94,9 @@ def siamese_model_dense(hp):
     activations = [activation_first] + [activation] * (num_layers - 2)
 
 
-    inp1 = layers.Input(shape=x_shape)
-    inp2 = layers.Input(shape=x_shape)
-    inp3 = layers.Input(shape=x_shape)
+    inp_anchor = layers.Input(shape=x_shape)
+    inp_positive = layers.Input(shape=x_shape)
+    inp_negative = layers.Input(shape=x_shape)
 
     # create the shared weights
     shared_weights = models.Sequential()
@@ -78,21 +117,21 @@ def siamese_model_dense(hp):
                 kernel_regularizer=tf.keras.regularizers.l2(kernel_regularizer_level),
                 activity_regularizer=tf.keras.regularizers.l2(activity_regularizer_level)
             ))
-            if i == 0 and batch_norm_first_layers: 
+            if batch_norm_layers: 
                 shared_weights.add(layers.BatchNormalization())
     
-    vec1 = shared_weights(inp1)
-    vec2 = shared_weights(inp2)
-    vec3 = shared_weights(inp3)
+    vec_anchor = shared_weights(inp_anchor)
+    vec_positive = shared_weights(inp_positive)
+    vecinp_negative = shared_weights(inp_negative)
 
-    vec1_output = layers.Dense(label_shape[0], activation='softmax')(vec1)
+    vec_anchor_output = layers.Dense(label_shape[0], activation='softmax')(vec_anchor)
 
     # create the models
-    model_siamese = tf.keras.Model(inputs=[inp1, inp2, inp3], outputs=[vec1, vec2, vec3])
-    model_encoder = tf.keras.Model(inputs=inp1, outputs=vec1)
-    model_inference = tf.keras.Model(inputs=inp1, outputs=vec1_output)
+    model_siamese = tf.keras.Model(inputs=[inp_anchor, inp_positive, inp_negative], outputs=[vec_anchor, vec_positive, vecinp_negative])
+    model_encoder = tf.keras.Model(inputs=inp_anchor, outputs=vec_anchor)
+    model_inference = tf.keras.Model(inputs=inp_anchor, outputs=vec_anchor_output)
 
-    loss = triplet_loss(vec1, vec2, vec3)
+    loss = triplet_loss(vec_anchor, vec_positive, vecinp_negative)
 
     model_siamese.add_loss(loss)
     model_siamese.add_metric(loss, name='triplet_loss', aggregation='mean')
