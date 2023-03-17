@@ -67,22 +67,19 @@ def download_dataset(url:str, unzip:bool=True, delete_zip:bool=True, files_to_mo
         os.rename('data/Data/Stocks', 'data/Stock')
         rmtree('data/Data')
 
+def convert_project_files_to_parquet():
     # convert the files to parquet format, which is a much better for this project
-    csv_files_to_compress = glob('data/*/*.csv') + glob('data/*/*/*.csv') + glob('data/*.csv')
-    for file in csv_files_to_compress:
-        if not os.path.exists(file.replace('.csv', '.parquet')):
-            df = load_file(file)
-            df.to_parquet(file.replace('.csv', '.parquet'), compression='brotli', engine='pyarrow')
-        if os.path.exists(file):
-            os.remove(file)
-
-    xlsx_files_to_compress = glob('data/*/*.xlsx') + glob('data/*/*/*.xlsx') + glob('data/*.xlsx')
-    for file in xlsx_files_to_compress:
-        if not os.path.exists(file.replace('.xlsx', '.parquet')):
-            df = load_file(file)
-            df.to_parquet(file.replace('.xlsx', '.parquet'), compression='brotli', engine='pyarrow')
-        if os.path.exists(file):
-            os.remove(file)
+    for file_type in ['csv', 'xlsx', 'txt', 'json', 'dat', 'pkl']:
+        files_to_compress = glob(f'data/*/*.{file_type}') + glob(f'data/*/*/*.{file_type}') + glob(f'data/*.{file_type}')
+        for file in files_to_compress:
+            if not os.path.exists(file.replace(f'.{file_type}', '.parquet')):
+                df = load_file(file)
+                if type(df) != bool: df.to_parquet(file.replace(f'.{file_type}', '.parquet'), compression='brotli', engine='pyarrow')
+            if os.path.exists(file):
+                os.remove(file)
+    # remove npy files
+    for file in glob('data/*.npy'):
+        os.remove(file)
 
 def load_file(file:str):
     """Reads file into a pandas dataframe. Supports csv, parquet and xlsx files. """
@@ -97,11 +94,18 @@ def load_file(file:str):
         return load(file, compression='lz4')
     elif file_type == '.lz4':
         return load(file, compression='lz4')
+    elif file_type == 'json':
+        return pd.read_json(file)
+    elif file_type == 'txt':
+        return pd.read_csv(file, sep='\t', low_memory=False, parse_dates=True, infer_datetime_format=True, on_bad_lines='skip', encoding_errors= 'replace')
+    elif file_type == 'dat':
+        return pd.read_csv(file, sep='\t', low_memory=False, parse_dates=True, infer_datetime_format=True, on_bad_lines='skip', encoding_errors= 'replace')
     else:
         try:
             return load(file)
         except:
-            raise ValueError("File type not supported.")
+            os.remove(file)
+            return False
 
 def save_file(df, file:str):
     """Saves a pandas dataframe to a file."""
@@ -737,6 +741,49 @@ def get_datasets(kaggle_api_key, data_nasdaq_key):
             delete=True,
             dest_name='Text',
             min_files_expected=3)
+
+
+
+
+    # slang datasets
+    download_dataset(
+            'https://www.kaggle.com/datasets/rtatman/spelling-variation-on-urban-dictionary', 
+            kaggle_api_key, 
+            files_to_move={'spelling_variants_valid.csv': 'Slang/spelling_variants_valid.csv'},
+            delete=True,
+            dest_name='Slang',
+            min_files_expected=1
+            )
+
+    download_dataset(
+            'https://www.kaggle.com/datasets/gowrishankarp/chat-slang-abbreviations-acronyms', 
+            kaggle_api_key, 
+            files_to_move={'slang.csv': 'Slang/slang.csv'},
+            delete=True,
+            dest_name='Slang',
+            min_files_expected=2
+            )
+
+    download_dataset(
+            'https://www.kaggle.com/datasets/rizdelhi/socialmediaabbrevations', 
+            kaggle_api_key, 
+            files_to_move={'abbrevations.csv': 'Slang/abbrevations.csv'},
+            delete=True,
+            dest_name='Slang',
+            min_files_expected=3
+            )
+
+    download_dataset(
+            'https://www.kaggle.com/datasets/gogylogy/twitterslang', 
+            kaggle_api_key, 
+            files_to_move={'twitterSlang.csv': 'Slang/twitterSlang.csv'},
+            delete=True,
+            dest_name='Slang',
+            min_files_expected=4
+            )
+    
+    print('Converting project files to parquet')
+    convert_project_files_to_parquet()
 
     # clear the username and key from the environment variables
     os.environ['KAGGLE_USERNAME'] = "" 
