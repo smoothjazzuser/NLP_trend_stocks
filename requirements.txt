@@ -7,13 +7,15 @@ seaborn
 kaggle
 pyarrow
 scipy
-transformers
 fasttext
 tensorflow==2.10.1
 keras-tuner
 scikit-learn
-tensorflow_datasets
+tensorflow-datasets
 tensorflow-text
 ipykernel
 ipywidgets
 tqdm
+transformers
+sentencepiece
+tensorflow-probability
