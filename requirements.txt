@@ -9,7 +9,7 @@ pyarrow
 scipy
 transformers
 fasttext
-tensorflow==2.10.1
+tensorflow==2.11.1
 keras-tuner
 scikit-learn
 tensorflow_datasets
