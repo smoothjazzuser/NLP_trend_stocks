@@ -8,7 +8,7 @@ Fasttext is currently difficult to compile on Windows 10/11. This could limit th
 
 cd {path_to_project_folder}
 
-conda create --prefix {path_to_project_folder}/.env/  -c esri -c anaconda -c nvidia -c conda-forge fasttext python=3.9 cudnn cudatoolkit tensorflow=2.10.0 transformers sentencepiece tensorflow-probability
+conda create --prefix {path_to_project_folder}/.env/  python=3.10  cudnn cudatoolkit pytorch torchvision torchaudio pytorch-cuda=11.8 transformers -c pytorch -c nvidia -c conda-forge
 
 conda activate {path_to_project_folder}/.env
 

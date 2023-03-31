@@ -17,8 +17,22 @@ from getpass import getpass
 from shutil import rmtree
 import os
 pd.set_option('io.parquet.engine', 'pyarrow')
-import fasttext
-import fasttext.util
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
+import torch.utils.data as data
+import subprocess
+import urllib.request
+import zipfile
+import shutil
+import os
+from transformers import AutoModelForSequenceClassification, TFAutoModelForSequenceClassification, AutoTokenizer, AutoConfig, pipeline
+#torch.use_deterministic_algorithms(True)
+#torch.backends.cudnn.deterministic = True
+torch.manual_seed(42)
+#import fasttext
+#import fasttext.util
 
 def download_dataset(url:str, unzip:bool=True, delete_zip:bool=True, files_to_move:dict = {}, delete=False, dest_name:str = None, verbose:bool = True, min_files_expected=1):
     """Downloads the datasets from kaggle using the official kaggle api.
@@ -121,6 +135,10 @@ def save_file(df, file:str):
 
 def fernet_key_encryption(password:str, name:str):
     """Encrypts and decrypts a key using Fernet encryption. 
+
+    If you need to change the keys or password, delete the relevent .secret keys file and run this section again.
+
+    salt.secret is a non-sensitive file that is used to both generate the encryption key as well as decryption. If this key is lost, the encrypted files are lost and you will need to re-enter the api keys.
     
     Args:
     
@@ -228,11 +246,7 @@ def parse_emotion_dataframes(selection: int = [0, 1, 2, 3, 4], ensure_only_one_l
 
     return df
 
-def interpolate_months_to_days(df: pd.DataFrame, extend_trend_to_today: bool = False):
-    """Interpolates the dataframe to account for missing days. E.g, Macro data is usually available on a monthly basis.
-    
-    Args: DataFrame, extend_trend_to_today (bool): If True, the index will be extended to today (only enabled for monthly data).)"""
-    #check if index is already datetime
+def df_to_datetime(df: pd.DataFrame, offset_days: int = 0):
     if not isinstance(df.index, pd.DatetimeIndex):
         #drop the time of day
         #df.date = df.date.dt.date
@@ -244,8 +258,22 @@ def interpolate_months_to_days(df: pd.DataFrame, extend_trend_to_today: bool = F
                     col = collumn
                     break
         df[col] = df[col].apply(lambda x: x.split(' ')[0])
-        df.index = pd.to_datetime(df[col])
+        offset_days = pd.Timedelta(f'{offset_days} days') #pd.Timedelta(days=offset_days)
+        time = pd.to_datetime(df[col], format='%Y-%m-%d')
+        time = time.apply(lambda x: x + offset_days)
+        # convert to days
+        df.index = time
+
+        print(time)
         df.drop(columns=[col], inplace=True)
+    return df
+
+def interpolate_months_to_days(df: pd.DataFrame, extend_trend_to_today: bool = False):
+    """Interpolates the dataframe to account for missing days. E.g, Macro data is usually available on a monthly basis.
+    
+    Args: DataFrame, extend_trend_to_today (bool): If True, the index will be extended to today (only enabled for monthly data).)"""
+    #check if index is already datetime
+    df = df_to_datetime(df)
 
     #check if the indexonthly
     if abs(df.index[-2:-1] - df.index[-1:]) > abs(14* pd.Timedelta('1 day')):
@@ -274,12 +302,20 @@ def interpolate_months_to_days(df: pd.DataFrame, extend_trend_to_today: bool = F
     
     return df
 
-def intersect_df(df1: pd.DataFrame, df2: pd.DataFrame, interpolate_to_days: bool = False, extend_trend_to_today: bool = False):
-    """Performantly Intersects two dataframes based on their index.
+def intersect_df(df1: pd.DataFrame, df2: pd.DataFrame, interpolate_to_days: bool = False, extend_trend_to_today: bool = False, offset_2nd_df_by_days: int = 1):
+    """Performantly Intersects two dataframes based on their (datetime) index.
     
-    Args: Two dataframes with a datetime index.
+    Args: 
+        - Two dataframes with a datetime index.
+        - interpolate_to_days (bool): If True, the dataframes will be interpolated to account for missing days. E.g, Macro data is usually available on a monthly basis.
+        - extend_trend_to_today (bool): If True, the index will be extended to today (only enabled for monthly data).
+        - offset_2nd_df_by_days (int): The number of days to offset the second dataframe by n. This is useful for next day prediction.
     
     Returns: The datapoints shared between the two datasets."""
+
+    if offset_2nd_df_by_days != 0:
+        df2 = df_to_datetime(df2, offset_days=offset_2nd_df_by_days)
+
 
     if interpolate_to_days:
         df1 = interpolate_months_to_days(df1, extend_trend_to_today)
@@ -287,8 +323,8 @@ def intersect_df(df1: pd.DataFrame, df2: pd.DataFrame, interpolate_to_days: bool
 
     df1 = df1[df1.index.isin(df2.index)]
     df2 = df2[df2.index.isin(df1.index)]
-    return df1, df2
 
+    return df1, df2
 class get_macroeconomic_data ():
     """Aquire historical macroeconomic data from different sources."""
     def __init__(self, path):
@@ -354,7 +390,13 @@ class get_macroeconomic_data ():
     def get_pandemics(self):
         pass
 class aquire_stock_search_terms():
-    """A work-in-progress. Goal is to take stock ticker symbols and return a list of search terms for NLP web scraping. Officers, affiliated companies, company name, etc."""
+    """
+    Gather the company info for all the ticker symbols and return a dataframe with relevant search terms for each company.
+
+    If the stocks dataset is updated on kaggle, compank_list.pkl needs to be deleted and this run again if the symbols have changed. 
+
+    TODO: It would be more efficient to manually pull the new stock data ourselves and keep the old ticker symbols.
+    """
     def __init__(self, file_path = 'data/Stock/', file_ext = '.parquet'):
         self.file_path = file_path
         self.file_ext = file_ext
@@ -588,19 +630,16 @@ def get_emotion_df():
         emotion_df = parse_emotion_dataframes([0, 1, 2, 3, 4], ensure_only_one_label=True)
         #drop duplicates
         emotion_df = emotion_df.drop_duplicates(subset=['text'])
-        if not os.path.exists('data/Emotions/cc.en.300.bin'):
-            fasttext.util.download_model('en', if_exists='ignore')
-            os.rename('cc.en.300.bin', 'data/Emotions/cc.en.300.bin')
-            os.remove('cc.en.300.bin.gz')
-            fast_text_model = fasttext.load_model('data/Emotions/cc.en.300.bin')
-        else:
-            fast_text_model = fasttext.load_model('data/Emotions/cc.en.300.bin')
+        
+        #list_of_emotions = emotion_df.columns[1:]
         # preprocess the text data using the fasttext model
-        emotion_df['text'] = emotion_df['text'].apply(lambda x: fast_text_model.get_sentence_vector(x))
+        #emotion_df['text'] = emotion_df['text'].apply(lambda x: fast_text_model.get_sentence_vector(x))
         # save the preprocessed data to a file as a parquet file
-        save_file(emotion_df, 'data/Emotions/emotion_df.parquet')
+        #save_file(emotion_df, 'data/Emotions/emotion_df.parquet')
+
     emotion_df.dropna(inplace=True)
-    return emotion_df
+    classes_len = len(emotion_df.columns[1:])
+    return emotion_df, classes_len
 
 class create_triplets():
     """Converts (x,y) to (anchor,positive,negative) where anchor and positive are positive examples and negative is a negative example. 
@@ -627,49 +666,49 @@ class create_triplets():
         
         model_siamese.fit(triplets.generator(), steps_per_epoch=triplets.num_batches, epochs=10)
         """
-    def __init__(self, x:np.array, y:np.array, batch_size:int=32, shuffle:bool=True, seed:int=42):
-        self.rng = np.random.default_rng(seed=seed)
+    def __init__(self, x:torch.tensor, y:torch.tensor, batch_size:int=32, shuffle:bool=True, seed:int=42):
+        self.i = 0
         self.x = x
         self.y = y
         self.batch_size = batch_size
+        self.batch_range = range(self.batch_size)
         self.shuffle = shuffle
         self.seed = seed
-        self.indices = np.arange(self.x.shape[0])
+        self.indices = torch.arange(self.x.shape[0])
         self.num_classes = self.y.shape[1]
-        self.class_indices = [np.where(self.y[:,i] == 1)[0] for i in range(self.num_classes)] # this is the indices for all the examples in each class
+        self.class_indices = [torch.where(self.y[:,i] == 1)[0] for i in range(self.num_classes)] # this is the indices for all the examples in each class
         self.num_examples_per_class = [len(x) for x in self.class_indices]
         self.num_examples = sum(self.num_examples_per_class)
         self.num_batches = self.num_examples // self.batch_size
         self.num_examples = self.num_batches * self.batch_size
         self.num_examples_per_class = [x // self.batch_size for x in self.num_examples_per_class]
-        if seed != None: np.random.seed(self.seed)
+        if seed != None: torch.manual_seed(seed)
 
         if self.shuffle:
-            self.rng.shuffle(self.indices)
+            for i in range(self.num_classes):
+                self.class_indices[i] = torch.randperm(self.class_indices[i].shape[0])
             self.class_indices = [self.indices[x] for x in self.class_indices]
 
     def __iter__(self):
         return self
 
-    def get_batch(self): #TODO: add multiprocessing and background workers to speed this up
+    def get_batch(self): 
         # randomly select two classes
-        anchor_class = self.rng.choice(self.num_classes, self.batch_size, replace=True)
+        anchor_class = torch.randint(self.num_classes, (self.batch_size,))
 
-        contrasting_class = self.rng.choice(self.num_classes, self.batch_size, replace=True)
-        if np.any(anchor_class == contrasting_class):
-            for i in range(self.batch_size):
-                while contrasting_class[i] == anchor_class[i]:
-                    contrasting_class[i] = self.rng.integers(self.num_classes)
+        # make sure the contrasting class is not the same as the anchor class
+        contrasting_class = torch.randint(self.num_classes - 1, (self.batch_size,))
+        contrasting_class[contrasting_class >= anchor_class] += 1 
 
         # randomly select batch examples from each class
-        examples_anchor = [self.rng.integers(self.num_examples_per_class[anchor_class[i]]) for i in range(self.batch_size)]
-        examples_positive = [self.rng.integers(self.num_examples_per_class[anchor_class[i]]) for i in range(self.batch_size)]
-        examples_negative = [self.rng.integers(self.num_examples_per_class[contrasting_class[i]]) for i in range(self.batch_size)]
+        examples_anchor = [torch.randint(self.num_examples_per_class[anchor_class[i]], (1,)) for i in self.batch_range]
+        examples_positive = [torch.randint(self.num_examples_per_class[anchor_class[i]], (1,)) for i in self.batch_range]
+        examples_negative = [torch.randint(self.num_examples_per_class[contrasting_class[i]], (1,)) for i in self.batch_range]
         
         # get the indices for the examples
-        indexes_anchor = [self.class_indices[anchor_class[i]][examples_anchor[i]] for i in range(self.batch_size)]
-        indexes_positive = [self.class_indices[anchor_class[i]][examples_positive[i]] for i in range(self.batch_size)]
-        indexes_negative = [self.class_indices[contrasting_class[i]][examples_negative[i]] for i in range(self.batch_size)]
+        indexes_anchor = [self.class_indices[anchor_class[i]][examples_anchor[i]] for i in self.batch_range]
+        indexes_positive = [self.class_indices[anchor_class[i]][examples_positive[i]] for i in self.batch_range]
+        indexes_negative = [self.class_indices[contrasting_class[i]][examples_negative[i]] for i in self.batch_range]
         
         anchor = self.x[indexes_anchor]
         positive = self.x[indexes_positive]
@@ -678,11 +717,16 @@ class create_triplets():
         return [anchor, positive, negative], anchor_class
 
     def generator(self):
-        self.rng = np.random.default_rng(seed=self.seed)
-        while True:
+        for _ in range(self.num_batches):
             yield self.get_batch()
 
-def get_datasets(kaggle_api_key, data_nasdaq_key):
+def available_mem():
+    """Return the available GPU memory in GB."""
+    MB_memory = int("".join([x for x in subprocess.check_output(["nvidia-smi", "--query-gpu=memory.free", "--format=csv"]).decode() if x.isdigit()]))
+    GB_memory = MB_memory / 1000
+    return GB_memory
+
+def get_datasets(kaggle_api_key, data_nasdaq_key=None):
     username, password = kaggle_api_key.split(' ')
     os.environ['KAGGLE_USERNAME'] = username
     os.environ['KAGGLE_KEY'] = password
@@ -788,3 +832,43 @@ def get_datasets(kaggle_api_key, data_nasdaq_key):
     # clear the username and key from the environment variables
     os.environ['KAGGLE_USERNAME'] = "" 
     os.environ['KAGGLE_KEY'] = ""
+
+# Preprocess text (username and link placeholders)
+def preprocess(text):
+    new_text = []
+    for t in text.split(" "):
+        t = '@user' if t.startswith('@') and len(t) > 1 else t
+        t = 'http' if t.startswith('http') else t
+        new_text.append(t)
+    return " ".join(new_text)
+
+def get_sentence_vectors(sentences, MODEL):
+    tokenizer = AutoTokenizer.from_pretrained(MODEL, use_fast=True)
+    """Returns the sentence vectors for the given sentences.
+    
+    Args:
+        sentences (list): A list of sentences.
+        
+    Returns:
+        torch.Tensor: A tensor of shape (len(sentences), 768) containing the sentence vectors."""
+    return [tokenizer.encode(preprocess(sentence), add_special_tokens=True, max_length=128, truncation=True, padding="max_length") for sentence in sentences]
+
+def download_file(url, filename, move_to=None):
+    """Downloads a file from a url and saves it to the specified filename.
+    
+    Args:
+        url (str): The url to download the file from.
+        filename (str): The filename to save the file to.
+    """
+    if not os.path.exists(move_to + filename) and not os.path.exists(move_to + filename.replace(filename.split('.')[-1], 'parquet')):
+        # create the directory if it doesn't exist
+        
+        with urllib.request.urlopen(url) as response, open(filename, 'wb') as out_file:
+            data = response.read() # a `bytes` object
+            out_file.write(data)
+
+    if move_to is not None:
+        if not os.path.exists(os.path.dirname(move_to)):
+            os.makedirs(os.path.dirname(move_to), exist_ok=True)
+        if not os.path.exists(move_to + filename) and not os.path.exists(move_to + filename.replace(filename.split('.')[-1], 'parquet')):
+            shutil.move(filename, move_to)

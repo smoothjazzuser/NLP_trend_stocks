@@ -136,3 +136,5 @@ dmypy.json
 # Pyre type checker
 .pyre/
 .gitignore
+stats.ipynb
+text_aug.py
