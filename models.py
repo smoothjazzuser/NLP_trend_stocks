@@ -144,11 +144,11 @@ def train_emotion_classifier(model, ds_train, ds_test, epochs=2, print_every=500
             optimizer.step()
             running_loss += loss.item()
             
-
             if i in [train_batches - 1, 0] or i % print_every == 0:
                 with torch.no_grad():
                     valid_loss = 0.0
-                    for batch in random.sample(ds_test, print_every):
+                    # validation set random batch of size print_every, 
+                    for batch in ds_test.take(print_every):
                         x, y = batch
                         y_pred = model(x)
                         loss = criterion(y_pred, y)
