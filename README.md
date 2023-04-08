@@ -4,8 +4,6 @@
 
 Windows:
 
-Fasttext is currently difficult to compile on Windows 10/11. This could limit the selection of python versions to ones which have precompiled versions of fasttext (currently python<3.10). Additionally, tensorflow==2.10.1 is the last supported native version on windows 10/11. If using linux, you could probably still use the latest versions of all packages.
-
 cd {path_to_project_folder}
 
 conda create --prefix {path_to_project_folder}/.env/  python=3.10  cudnn cudatoolkit pytorch torchvision torchaudio pytorch-cuda=11.8 transformers -c pytorch -c nvidia -c conda-forge

@@ -12,3 +12,8 @@ ipykernel
 ipywidgets
 tqdm
 transformers[sentencepiece]
+arrow
+stweet
+newspaper3k
+json
+tor_python_easy
