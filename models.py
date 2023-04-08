@@ -10,6 +10,7 @@ cuda = torch.device("cuda")
 cpu = torch.device("cpu")
 from tqdm.notebook import tqdm
 from utils import get_emotion_df, create_triplets
+import random
 
 class siamese_network(nn.Module):
     """Instantiate the xlm-roberta-base-sentiment model and add a siamese network head to it to replace the sentiment classifier head with emotion classifier head. Allowes for the model to later be altered to train on non-triplet data after pre-training on triplet data.
@@ -52,7 +53,7 @@ class siamese_network(nn.Module):
         
         return anchor, positive, negative
 
-def pre_train_using_siamese(train_triplets, test_triplets, siamese_model, classes, epochs=4, print_every=25, history= {'train': [], 'test': []}, criterion=torch.nn.CrossEntropyLoss(), freeze=True):
+def pre_train_using_siamese(train_triplets, test_triplets, siamese_model, classes, epochs=4, print_every=500, history= {'train': [], 'test': []}, criterion=torch.nn.CrossEntropyLoss()):
     """Pret-train the emotion classifier (the weights prior to the final layer) using a siamese network in order to ensure the classifier has an easier job.
     
     Triplet test is currenetly not used due to a bug somewhere in the code.
@@ -71,7 +72,10 @@ def pre_train_using_siamese(train_triplets, test_triplets, siamese_model, classe
         nn.Module -- The siamese network model
         history -- The loss history dictionary
         """
-    class_specific_loss_history = {classes[c] : [] for c in range(siamese_model.classes)}
+    for param in siamese_model.base.parameters():
+        param.requires_grad = False
+    print(f'trainable: {[name for name, param in siamese_model.named_parameters() if param.requires_grad]}')
+
     optimizer=torch.optim.Adam(siamese_model.parameters(), lr=0.0001)
     contrastive_loss = torch.nn.TripletMarginWithDistanceLoss(margin=siamese_model.vector_size,reduction='mean', distance_function=nn.PairwiseDistance(p=2.0, eps=1e-06, keepdim=False))
     for epoch in range(epochs):
@@ -84,32 +88,25 @@ def pre_train_using_siamese(train_triplets, test_triplets, siamese_model, classe
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
-            for c in range(siamese_model.classes):
-                if anchor_class[c] == 1:
-                    class_specific_loss_history[classes[c]].append(loss.item())
             
             if i in [train_triplets.num_batches - 1, 0] or i % print_every == 0:
-                window_start = max(0, len(class_specific_loss_history[classes[c]]) - print_every)
-                class_losses = {classes[c] : np.mean(class_specific_loss_history[classes[c]][window_start:]) for c in range(siamese_model.classes)}
-                print(f"Complete {epoch * train_triplets.num_batches + i + 1} / {epochs * train_triplets.num_batches}. Epoch {epoch + 1} / {epochs}.", running_loss / print_every, class_losses,end='\r')
+                with torch.no_grad():
+                    valid_loss = 0.0
+                    for i in range(print_every):
+                        [anchor, positive, negative], anchor_class = test_triplets.get_batch()
+                        output1, output2, output3 = siamese_model(anchor, positive, negative)
+                        loss = contrastive_loss(output1, output2, output3)
+                        valid_loss += loss.item()
+                    history['test'].append(valid_loss / print_every)
+                    
+
+                print(f"Complete {epoch * train_triplets.num_batches + i + 1} / {epochs * train_triplets.num_batches}. Epoch {epoch + 1} / {epochs}.", running_loss / print_every, "val loss:" , history['test'][-1], end='\r')
                 history['train'].append(running_loss / print_every)
                 running_loss = 0.0
+                
+    return siamese_model, history
 
-            # with torch.no_grad():
-        #     running_loss = 0.0
-        #     for i in tqdm(range(test_triplets.num_batches), total=test_triplets.num_batches * epochs):
-        #         [anchor, positive, negative], anchor_class = test_triplets.get_batch()
-        #         output1, output2, output3 = siamese_network_model(anchor, positive, negative)
-        #         loss = contrastive_loss(output1, output2, output3)
-        #         running_loss += loss.item()
-        #         history_pretraining['test'].append(loss.item())
-        #     print(f"Testing: Complete {epoch * test_triplets.num_batches + i + 1} / {epochs * test_triplets.num_batches}. Epoch {epoch + 1} / {epochs}.", i + 1, running_loss / test_triplets.num_batches)
-    if freeze:
-        for param in siamese_model.parameters():
-            param.requires_grad = False
-    return siamese_model, history, class_specific_loss_history
-
-def train_emotion_classifier(model, ds_train, ds_test, epochs=2, print_every=25, history= {'train': [], 'test': []}, criterion=torch.nn.CrossEntropyLoss()):
+def train_emotion_classifier(model, ds_train, ds_test, epochs=2, print_every=500, history= {'train': [], 'test': []}, criterion=torch.nn.CrossEntropyLoss()):
     """Train the emotion classifier using the siamese network weights as a starting point. This only updates the final layer of the model.
     
     Arguments:
@@ -125,6 +122,9 @@ def train_emotion_classifier(model, ds_train, ds_test, epochs=2, print_every=25,
         nn.Module -- The emotion classifier model
         history -- The loss history dictionary
         """
+    for param in model.siamese_network.parameters():
+            param.requires_grad = False
+    print(f'trainable: {[name for name, param in model.named_parameters() if param.requires_grad]}')
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
     criterion = torch.nn.CrossEntropyLoss()
     test_batches = len(ds_test)
@@ -133,6 +133,7 @@ def train_emotion_classifier(model, ds_train, ds_test, epochs=2, print_every=25,
     # train classify_single_input. This uses binart cross entropy loss
     for epoch in range(epochs):
         running_loss = 0.0
+        valid_loss = 0.0
         i = 0 
         for batch in tqdm(ds_train, total=len(ds_train) * epochs):
             optimizer.zero_grad()
@@ -145,21 +146,20 @@ def train_emotion_classifier(model, ds_train, ds_test, epochs=2, print_every=25,
             
 
             if i in [train_batches - 1, 0] or i % print_every == 0:
-                print(f"Complete {epoch * train_batches + i + 1} / {epochs * train_batches}. Epoch {epoch + 1} / {epochs}.", i + 1, running_loss / print_every, end='\r')
+                with torch.no_grad():
+                    valid_loss = 0.0
+                    for batch in random.sample(ds_test, print_every):
+                        x, y = batch
+                        y_pred = model(x)
+                        loss = criterion(y_pred, y)
+                        valid_loss += loss.item()
+                    history['test'].append(valid_loss / print_every)
+
+                print(f"Complete {epoch * train_batches + i + 1} / {epochs * train_batches}. Epoch {epoch + 1} / {epochs}.", i + 1, running_loss / print_every, "val loss:" , history['test'][-1], end='\r')
                 history['train'].append(running_loss / print_every)
                 running_loss = 0.0
             i += 1
 
-        with torch.no_grad():
-            running_loss = 0.0
-            for batch in tqdm(ds_test, total=len(ds_test) * epochs):
-                x, y = batch
-                y_pred = model(x)
-                loss = criterion(y_pred, y)
-                running_loss += loss.item()
-                history['test'].append(loss.item())
-
-            print(f"Complete {epoch * test_batches + i + 1 // epochs * test_batches}% Epoch {epoch + 1}/{epochs}.", "Loss",running_loss / test_batches, end='\r')
     return model, history
 
 def prep_triplet_data(MODEL=f"cardiffnlp/twitter-xlm-roberta-base-sentiment"):
@@ -185,7 +185,7 @@ def prep_triplet_data(MODEL=f"cardiffnlp/twitter-xlm-roberta-base-sentiment"):
     x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2, random_state=42, stratify=y)
     x_train, y_train, x_test, y_test = x_train.to(cuda), y_train.to(cuda), x_test.to(cuda), y_test.to(cuda)
     train_triplets = create_triplets(x_train, y_train, batch_size=32, shuffle=True, seed=42)
-    test_triplets = create_triplets(x_test, y_test, batch_size=2, shuffle=True, seed=42)
+    test_triplets =  create_triplets(x_test, y_test, batch_size=1, shuffle=True, seed=42)
 
     return classes, train_triplets, test_triplets, x_train, y_train, x_test, y_test
 

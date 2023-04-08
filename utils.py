@@ -732,12 +732,12 @@ class create_triplets():
         contrasting_class[contrasting_class >= anchor_class] += 1 
 
         # randomly select batch examples from each class
-        examples_anchor = [torch.randint(self.num_examples_per_class[anchor_class[i]], (1,)) for i in self.batch_range]
+        examples_anchor   = [torch.randint(self.num_examples_per_class[anchor_class[i]], (1,)) for i in self.batch_range]
         examples_positive = [torch.randint(self.num_examples_per_class[anchor_class[i]], (1,)) for i in self.batch_range]
         examples_negative = [torch.randint(self.num_examples_per_class[contrasting_class[i]], (1,)) for i in self.batch_range]
         
         # get the indices for the examples
-        indexes_anchor = [self.class_indices[anchor_class[i]][examples_anchor[i]] for i in self.batch_range]
+        indexes_anchor =   [self.class_indices[anchor_class[i]][examples_anchor[i]] for i in self.batch_range]
         indexes_positive = [self.class_indices[anchor_class[i]][examples_positive[i]] for i in self.batch_range]
         indexes_negative = [self.class_indices[contrasting_class[i]][examples_negative[i]] for i in self.batch_range]
         
