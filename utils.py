@@ -10,7 +10,6 @@ from glob import glob
 from compress_pickle import dump, load
 from yahooquery import Ticker
 import timeit
-import time
 import datetime
 import re
 from getpass import getpass
@@ -18,27 +17,32 @@ from shutil import rmtree
 import os
 pd.set_option('io.parquet.engine', 'pyarrow')
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
-import torch.utils.data as data
 import subprocess
 import urllib.request
-import zipfile
 import shutil
 import os
-from transformers import AutoModelForSequenceClassification, TFAutoModelForSequenceClassification, AutoTokenizer, AutoConfig, pipeline
+from transformers import AutoTokenizer
 #torch.use_deterministic_algorithms(True)
 #torch.backends.cudnn.deterministic = True
 torch.manual_seed(42)
-#import fasttext
-#import fasttext.util
+cuda = torch.device("cuda")
+cpu = torch.device("cpu")
 
 def download_dataset(url:str, unzip:bool=True, delete_zip:bool=True, files_to_move:dict = {}, delete=False, dest_name:str = None, verbose:bool = True, min_files_expected=1):
     """Downloads the datasets from kaggle using the official kaggle api.
     
     See this forumn for more information, as the official documentation is lacking:
-        https://stackoverflow.com/questions/55934733/documentation-for-kaggle-api-within-python"""
+        https://stackoverflow.com/questions/55934733/documentation-for-kaggle-api-within-python
+        
+    Args:
+        url (str): The url of the dataset. Can be found on the kaggle website.
+        unzip (bool): Whether to unzip the dataset or not.
+        delete_zip (bool): Whether to delete the zip file after unzipping.
+        files_to_move (dict): A dictionary of files to keep. This is used to determine whether the dataset has already been downloaded.
+        delete (bool): Whether to delete the dataset folder after moving the files.
+        dest_name (str): The name of the folder to move the files to.
+        verbose (bool): Whether to print the progress of the download.
+        min_files_expected (int): The minimum number of files expected in the folder. If the number of files is less than this, the dataset will be downloaded. A quick and lazy way to check if the dataset has been downloaded. Open to imporvement."""
     from kaggle.api.kaggle_api_extended import KaggleApi 
 
     api = KaggleApi()
@@ -50,8 +54,6 @@ def download_dataset(url:str, unzip:bool=True, delete_zip:bool=True, files_to_mo
     if delete_zip:
         for file in glob('data/*.zip'):
             os.remove(file)
-
-    
 
     aquire_files_needed = True if len(glob(f'data/{dest_name}/*.parquet')) < min_files_expected else False
     
@@ -82,7 +84,7 @@ def download_dataset(url:str, unzip:bool=True, delete_zip:bool=True, files_to_mo
         rmtree('data/Data')
 
 def convert_project_files_to_parquet():
-    # convert the files to parquet format, which is a much better for this project
+    """"convert the files to parquet format, which is a much better for this project. Will convert all csv, xlsx, txt, json, dat and pkl files in data/ to parquet and then delete the original files (to save space)."""
     for file_type in ['csv', 'xlsx', 'txt', 'json', 'dat', 'pkl']:
         files_to_compress = glob(f'data/*/*.{file_type}') + glob(f'data/*/*/*.{file_type}') + glob(f'data/*.{file_type}')
         for file in files_to_compress:
@@ -96,7 +98,10 @@ def convert_project_files_to_parquet():
         os.remove(file)
 
 def load_file(file:str):
-    """Reads file into a pandas dataframe. Supports csv, parquet and xlsx files. """
+    """Reads file into a pandas dataframe. Supports csv, xlsx, txt, json, lz4, dat and pkl files.
+    
+    args:
+        file path (str): The file to load."""
     file_type = file.split('.')[-1]
     if file_type == 'parquet':
         return pd.read_parquet(file)
@@ -105,8 +110,8 @@ def load_file(file:str):
     elif file_type == 'xlsx':
         return pd.read_excel(file, parse_dates=True)
     elif file_type == 'pkl':
-        return load(file, compression='lz4')
-    elif file_type == '.lz4':
+        return load(file)
+    elif file_type in ['.lz4', 'lz4']:
         return load(file, compression='lz4')
     elif file_type == 'json':
         return pd.read_json(file)
@@ -121,10 +126,26 @@ def load_file(file:str):
             os.remove(file)
             return False
 
-def save_file(df, file:str):
-    """Saves a pandas dataframe to a file."""
+def save_file(df, file:str, force_type=None):
+    """Saves a pandas dataframe to a file. Supports parquet, pkl, csv and xlsx files.
+    
+    args:
+        df (pd.DataFrame): The dataframe to save.
+        file path (str) + extension: The file to save to.
+        columns (list): The columns to save. If None, all columns will be saved with default names."""
     file_type = file.split('.')[-1]
+    #print(type(df[0]), type(df), df)
+    if type(df) == list:
+        df ={'0': df}
+        if force_type:
+            df = pd.DataFrame(data=df, dtype=force_type)
+        else:
+            df = pd.DataFrame(data=df)
+    if type(df) == dict:
+        df = pd.DataFrame(data=df)
     if file_type == 'parquet':
+        if force_type:
+            df = df.astype(force_type)
         df.to_parquet(file, compression='brotli', engine='pyarrow')
     elif file_type == 'pkl':
         dump(df, file + '.lz4', compression='lz4')
@@ -138,7 +159,7 @@ def fernet_key_encryption(password:str, name:str):
 
     If you need to change the keys or password, delete the relevent .secret keys file and run this section again.
 
-    salt.secret is a non-sensitive file that is used to both generate the encryption key as well as decryption. If this key is lost, the encrypted files are lost and you will need to re-enter the api keys.
+    salt.secret is a non-sensitive file that is used to both generate the encryption key as well as decryption. If this key is lost, the encrypted files are lost and you will need to re-enter the api keys. It should automatically be generated if it is not found.
     
     Args:
     
@@ -147,7 +168,7 @@ def fernet_key_encryption(password:str, name:str):
         name (str): The name of the key to encrypt.
         
     Returns:
-    Saves the encrypted key to a file and returns the decrypted key."""
+    Saves the encrypted key to a file, creates a salt file if needed, and returns the decrypted key."""
     # Convert to type bytes
     password = password.encode()
     
@@ -189,18 +210,16 @@ def fernet_key_encryption(password:str, name:str):
             f.write(token)
         return token.decode()
 
-def cpi_adjust(df: pd.DataFrame, cpi: pd.DataFrame):
-    """Adjusts the dataframe to account for inflation."""
-
-    for col in [x for x in df.columns if x not in ["CPI", "date", "Unemp_rate", "mortgage_rate"]]:
-        df[col] = df[col].div(cpi.CPI, axis=0)
-
-    return df
-
 def parse_emotion_dataframes(selection: int = [0, 1, 2, 3, 4], ensure_only_one_label: bool = True):
-    """Parses the emotion dataframes. 
+    """Parses the emotion dataframes. Normalizes each of the specific 29 dataset labels to the same label names, then combines the five of them into one dataframe. The resulting dataset is highly unbalanced, with predominant negative emotions.
     
-    Args: selection (int): The emotion dataframes to parse. 0 = GoEmotions, 1 = """
+    Args: 
+        selection (int): The emotion dataframes to parse. 0 = https://www.kaggle.com/datasets/mathurinache/goemotions, [1, 2, 3] = www.kaggle.com/datasets/parulpandey/emotion-dataset, 4 = https://www.kaggle.com/datasets/kosweet/cleaned-emotion-extraction-dataset-from-twitter
+        ensure_only_one_label (bool): If True, ensures that each row only has one label. If False, allows multiple labels per row.
+
+    Returns:
+        df (pd.DataFrame): The combined dataframe of the selected datasets.
+    """
 
     def df_load_(file, drop_cols, new_cols, rename_cols=[]):
         """Loads the dataframe and drops the columns that are not needed."""
@@ -617,29 +636,41 @@ class aquire_stock_search_terms():
             self.yh_tickers = []
         return True if error == "" else False
 
-def get_emotion_df():
-    """Parses the emotion dataframes and returns a dataframe with the emotion data that has been tokenized using of of the fasttext larger english cbow models.
+def get_emotion_df(MODEL:str=f"cardiffnlp/twitter-xlm-roberta-base-sentiment"):
+    """Parses the emotion dataframes and returns a dataframe.
     
     This saves a little bit of the processing time at the expense of storage space.
     
     Returns:
         pd.DataFrame"""
-    if os.path.exists('data/Emotions/emotion_df.parquet'):
-        emotion_df = load_file('data/Emotions/emotion_df.parquet')
+    if os.path.exists('data/Emotions/classes_df.parquet') and os.path.exists('data/Emotions/x_df.parquet') and os.path.exists('data/Emotions/y_df.parquet'):
+        #emotion_df = load_file('data/Emotions/emotion_df.parquet')
+        classes = load_file('data/Emotions/classes_df.parquet').values.flatten().tolist()
+        sentences = load_file('data/Emotions/x_df.parquet').values.flatten().tolist()
+        emotions = load_file('data/Emotions/y_df.parquet').values.flatten().tolist()
+
     else:
         emotion_df = parse_emotion_dataframes([0, 1, 2, 3, 4], ensure_only_one_label=True)
         #drop duplicates
         emotion_df = emotion_df.drop_duplicates(subset=['text'])
+
+        emotion_df.dropna(inplace=True)
+        classes = emotion_df.columns[1:].values.tolist()
+
+        sentences = emotion_df.text.values
+        sentences = get_sentence_vectors(sentences, MODEL)
+
+        emotions = emotion_df.drop('text', axis=1, inplace=False).values.tolist()
+
         
-        #list_of_emotions = emotion_df.columns[1:]
-        # preprocess the text data using the fasttext model
-        #emotion_df['text'] = emotion_df['text'].apply(lambda x: fast_text_model.get_sentence_vector(x))
         # save the preprocessed data to a file as a parquet file
         #save_file(emotion_df, 'data/Emotions/emotion_df.parquet')
+        save_file(classes, 'data/Emotions/classes_df.parquet')
+        save_file(sentences, 'data/Emotions/x_df.parquet')
+        save_file(emotions, 'data/Emotions/y_df.parquet')
 
-    emotion_df.dropna(inplace=True)
-    classes_len = len(emotion_df.columns[1:])
-    return emotion_df, classes_len
+
+    return sentences, emotions, classes
 
 class create_triplets():
     """Converts (x,y) to (anchor,positive,negative) where anchor and positive are positive examples and negative is a negative example. 
@@ -727,6 +758,11 @@ def available_mem():
     return GB_memory
 
 def get_datasets(kaggle_api_key, data_nasdaq_key=None):
+    """Download the datasets from kaggle and then convert thhem to highly compressed parquet files.
+    
+    Args:
+        kaggle_api_key: str, the kaggle api key
+        data_nasdaq_key: str, the data.nasdaq.com api key... not used currently"""
     username, password = kaggle_api_key.split(' ')
     os.environ['KAGGLE_USERNAME'] = username
     os.environ['KAGGLE_KEY'] = password
@@ -786,9 +822,6 @@ def get_datasets(kaggle_api_key, data_nasdaq_key=None):
             dest_name='Text',
             min_files_expected=3)
 
-
-
-
     # slang datasets
     download_dataset(
             'https://www.kaggle.com/datasets/rtatman/spelling-variation-on-urban-dictionary', 
@@ -835,6 +868,13 @@ def get_datasets(kaggle_api_key, data_nasdaq_key=None):
 
 # Preprocess text (username and link placeholders)
 def preprocess(text):
+    """The preprocessing function used to preprocess the text for the finAlbert model.
+    
+    Args:
+        text (str): The text to preprocess.
+        
+    Returns:
+        str: The preprocessed text."""
     new_text = []
     for t in text.split(" "):
         t = '@user' if t.startswith('@') and len(t) > 1 else t
@@ -843,6 +883,12 @@ def preprocess(text):
     return " ".join(new_text)
 
 def get_sentence_vectors(sentences, MODEL):
+    """Returns the sentence vectors for the given sentences. The sentence vectors are calculated using the finAlbert tokenizer.
+    
+    Args:
+        sentences (list-like): A list of sentences.
+        MODEL (str): The model to use (finAlbert).
+        """
     tokenizer = AutoTokenizer.from_pretrained(MODEL, use_fast=True)
     """Returns the sentence vectors for the given sentences.
     
@@ -854,7 +900,7 @@ def get_sentence_vectors(sentences, MODEL):
     return [tokenizer.encode(preprocess(sentence), add_special_tokens=True, max_length=128, truncation=True, padding="max_length") for sentence in sentences]
 
 def download_file(url, filename, move_to=None):
-    """Downloads a file from a url and saves it to the specified filename.
+    """Downloads a file from a url and saves it to the specified filename. Not used in the current version but useful on windows, where this sometimes is needed as an alternative to wget.
     
     Args:
         url (str): The url to download the file from.
