@@ -248,11 +248,11 @@ def augment_list_till_length(l, maxlength=400000, num_thread = 12, mapping = {'P
     
     sentences = sentiment(l)
     aug_pre = naw.ContextualWordEmbsAug(model_path='roberta-base', action="substitute", aug_min=1, aug_max=2, device='cuda')
-    #aug_pre2 = naw.SynonymAug(aug_src='wordnet', aug_min=1, aug_max=2)
+    aug_pre2 = naw.SynonymAug(aug_src='wordnet', aug_min=1, aug_max=2)
     
 
     aug = naf.Sometimes([
-        #naw.SynonymAug(aug_src='wordnet', aug_p=0.05, aug_min=0, aug_max=2),
+        naw.SynonymAug(aug_src='wordnet', aug_p=0.05, aug_min=0, aug_max=2),
         nac.RandomCharAug(action="insert", aug_char_min=0, aug_char_max=2, aug_word_min=0, aug_word_max=2, aug_word_p=0.05, aug_char_p=0.05),
         nac.KeyboardAug(aug_char_p=0.05, aug_word_p=0.3, aug_word_min=0, aug_word_max=2, aug_char_min=0, aug_char_max=2),
         naw.SpellingAug(aug_min=0, aug_max=3, aug_p=0.05),
@@ -275,7 +275,7 @@ def augment_list_till_length(l, maxlength=400000, num_thread = 12, mapping = {'P
                 pot_senti2 = [potential2[j] for j in range(len(potential2)) if pot_senti2[j] == sentences[i]]
 
                 augments.update(pot_senti1)
-                #augments.update(pot_senti2)
+                augments.update(pot_senti2)
 
                 pbar.update(len(augments) - pbar.n)
                 if len(augments) >= maxlength//4:
