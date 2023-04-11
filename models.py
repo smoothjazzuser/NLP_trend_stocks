@@ -162,7 +162,7 @@ def train_emotion_classifier(model, ds_train, ds_test, epochs=2, print_every=500
 
     return model, history
 
-def prep_triplet_data(MODEL=f"cardiffnlp/twitter-xlm-roberta-base-sentiment"):
+def prep_triplet_data(MODEL=f"cardiffnlp/twitter-xlm-roberta-base-sentiment", augment=True, aug_n = 400000):
     """Prepares the data for training the triplet network
     
     Requires that the emotion dataset has been downloaded and extracted and then preprocessed to the appropriate locations.
@@ -177,15 +177,24 @@ def prep_triplet_data(MODEL=f"cardiffnlp/twitter-xlm-roberta-base-sentiment"):
         y_test -- The testing labels split
         """
     #emotion_df, classes = get_emotion_df()
-    sentences, emotions, classes = get_emotion_df(MODEL)
+    sentences, emotions, sentences_augs, emotions_augs, classes = get_emotion_df(MODEL, augment=augment, aug_n = aug_n)
 
     x = torch.stack([torch.tensor(sentence) for sentence in sentences]).to(cpu)
+    x_aug = torch.stack([torch.tensor(sentence) for sentence in sentences_augs]).to(cpu)
+
     y = torch.tensor(emotions, dtype=torch.float32).to(cpu)
+    y_aug = torch.tensor(emotions_augs, dtype=torch.float32).to(cpu)
     
     x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2, random_state=42, stratify=y)
     x_train, y_train, x_test, y_test = x_train.to(cuda), y_train.to(cuda), x_test.to(cuda), y_test.to(cuda)
+
+    x_train = torch.cat((x_train, x_aug), 0)
+    y_train = torch.cat((y_train, y_aug), 0)
+
     train_triplets = create_triplets(x_train, y_train, batch_size=32, shuffle=True, seed=42)
     test_triplets =  create_triplets(x_test, y_test, batch_size=1, shuffle=True, seed=42)
+
+    
 
     return classes, train_triplets, test_triplets, x_train, y_train, x_test, y_test
 

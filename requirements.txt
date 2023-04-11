@@ -17,3 +17,6 @@ stweet
 newspaper3k
 json
 tor_python_easy
+nlpaug
+nltk
+flair
