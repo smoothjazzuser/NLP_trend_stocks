@@ -247,43 +247,41 @@ def augment_list_till_length(l, maxlength=400000, num_thread = 12, mapping = {'P
         return sentences
     
     sentences = sentiment(l)
-    aug_pre = naw.ContextualWordEmbsAug(model_path='roberta-base', action="substitute", aug_min=1, aug_max=2, device='cuda')
+    aug_pre = naw.ContextualWordEmbsAug(model_path='roberta-base', action="substitute", aug_min=1, aug_max=3, device='cuda')
     aug_pre2 = naw.SynonymAug(aug_src='wordnet', aug_min=1, aug_max=2)
-    
-
     aug = naf.Sometimes([
-        naw.SynonymAug(aug_src='wordnet', aug_p=0.05, aug_min=0, aug_max=2),
         nac.RandomCharAug(action="insert", aug_char_min=0, aug_char_max=2, aug_word_min=0, aug_word_max=2, aug_word_p=0.05, aug_char_p=0.05),
         nac.KeyboardAug(aug_char_p=0.05, aug_word_p=0.3, aug_word_min=0, aug_word_max=2, aug_char_min=0, aug_char_max=2),
         naw.SpellingAug(aug_min=0, aug_max=3, aug_p=0.05),
         ])
 
-    print(f'step 1: augmenting len(list) {len(l)} to {maxlength//4} using naw.ContextualWordEmbsAug')
+    print(f'step 1: augmenting len(list) {len(l)} to {maxlength//6} using naw.ContextualWordEmbsAug')
     with tqdm(total=maxlength, dynamic_ncols=True) as pbar:
         l_frozen_size = len(l)
         augments = set(l)
-        if len(l) < maxlength//4:
-            n = max(1, maxlength//4//len(l))
-            
-            for i in range(l_frozen_size):
-                potential1 = aug_pre.augment(l[i], n=n, num_thread=min(n, num_thread)) 
-                pot_senti1 = sentiment(potential1)
-                pot_senti1 = [potential1[j] for j in range(len(potential1)) if pot_senti1[j] == sentences[i]]
+        if len(l) < maxlength//2:
 
-                potential2 = aug_pre2.augment(l[i], n=n, num_thread=1)
-                pot_senti2 = sentiment(potential2)
-                pot_senti2 = [potential2[j] for j in range(len(potential2)) if pot_senti2[j] == sentences[i]]
-
-                augments.update(pot_senti1)
-                augments.update(pot_senti2)
-
-                pbar.update(len(augments) - pbar.n)
-                if len(augments) >= maxlength//4:
-                    break
+            while len(augments) < maxlength//4:
+                n = max(1, int(round(maxlength//4//len(l),0)))
+                for i in range(l_frozen_size):
+                    potential1 = aug_pre.augment(l[i], n=n, num_thread=min(num_thread, n))
+                    pot_senti1 = sentiment(potential1)
+                    pot_senti1 = [potential1[j] for j in range(len(potential1)) if pot_senti1[j] == sentences[i]]
+                    augments.update(pot_senti1)
+                    pbar.update(len(augments) - pbar.n)
+                    if len(augments) >= maxlength//4:
+                        break
+            while len(augments) < maxlength//2:
+                n = max(1, int(round(maxlength//2//len(l),0)))
+                for i in range(l_frozen_size):
+                    potential2 = aug_pre2.augment(l[i], n, num_thread=1)
+                    pot_senti2 = sentiment(potential2)
+                    pot_senti2 = [potential2[j] for j in range(len(potential2)) if pot_senti2[j] == sentences[i]]
+                    augments.update(pot_senti2)
+                    pbar.update(len(augments) - pbar.n)
+                    if len(augments) >= maxlength//2:
+                        break
             l = [x for x in augments]
-        
-        with contextlib.suppress(Exception): del sentences, aug_pre, aug_pre2, pot_senti1, pot_senti2, potential1, potential2, augments, tagger
-            
             
         print(f'step 2: augmenting len(list) {len(l)} to {maxlength} using synonyms and spelling errors')
         augments = set()
@@ -326,7 +324,6 @@ def parse_emotion_dataframes(selection: int = [0, 1, 2, 3, 4], ensure_only_one_l
 
     def df_load_(file, drop_cols, new_cols, rename_cols=[]):
         """Loads the dataframe and drops the columns that are not needed."""
-        df0, df1, df2, df3, df4 = pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame
         df = load_file(file)
         if 'label' in df.columns:
             df = pd.get_dummies(df, columns=['label'])
@@ -783,20 +780,21 @@ def get_emotion_df(MODEL:str=f"cardiffnlp/twitter-xlm-roberta-base-sentiment", a
         emotion_df, df_augs = parse_emotion_dataframes([0, 1, 2, 3, 4], ensure_only_one_label=True, augment_data=augment, aug_n = aug_n)
 
         emotion_df = emotion_df.drop_duplicates(subset=['text'])
-        df_augs = df_augs.drop_duplicates(subset=['text'])
+        if augment: df_augs = df_augs.drop_duplicates(subset=['text'])
+        else: sentences_augs, emotions_augs = [], []
 
         emotion_df.fillna(0, inplace=True)
-        df_augs.fillna(0,inplace=True)
+        if augment: df_augs.fillna(0,inplace=True)
         classes = emotion_df.columns[1:].values.tolist()
 
         sentences = emotion_df.text.values
         sentences = get_sentence_vectors(sentences, MODEL)
-        sentences_augs = df_augs.text.values
-        if augment:
+        if augment: 
+            sentences_augs = df_augs.text.values
             sentences_augs = get_sentence_vectors(sentences_augs, MODEL)
 
         emotions = emotion_df.drop('text', axis=1, inplace=False).values.tolist()
-        emotions_augs = df_augs.drop('text', axis=1, inplace=False).values.tolist()
+        if augment: emotions_augs = df_augs.drop('text', axis=1, inplace=False).values.tolist()
 
         
         if not os.path.exists('data/Emotions/classes_df.parquet'): save_file(classes, 'data/Emotions/classes_df.parquet')
