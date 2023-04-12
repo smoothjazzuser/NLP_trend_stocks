@@ -34,6 +34,8 @@ from flair.nn import Classifier
 from gc import collect
 import contextlib
 import io
+import zipfile
+from sklearn.model_selection import train_test_split
 #torch.use_deterministic_algorithms(True)
 #torch.backends.cudnn.deterministic = True
 torch.manual_seed(42)
@@ -128,7 +130,7 @@ def load_file(file:str):
     elif file_type == 'json':
         return pd.read_json(file)
     elif file_type == 'txt':
-        return pd.read_csv(file, sep='\t', low_memory=False, parse_dates=True, infer_datetime_format=True, on_bad_lines='skip', encoding_errors= 'replace')
+        return pd.read_csv(file, sep='\t', parse_dates=True, infer_datetime_format=True, on_bad_lines='skip', encoding_errors= 'replace')
     elif file_type == 'dat':
         return pd.read_csv(file, sep='\t', low_memory=False, parse_dates=True, infer_datetime_format=True, on_bad_lines='skip', encoding_errors= 'replace')
     else:
@@ -227,7 +229,7 @@ def augment_list_till_length(l, maxlength=400000, num_thread = 12, mapping = {'P
     
     tagger = Classifier.load('sentiment')
     
-    def sentiment(l):
+    def sentiment_(l):
         """Ensures that, at a minimum, the augmented sentences have the same emotional valence as the original sentences.
         
         args:
@@ -246,36 +248,41 @@ def augment_list_till_length(l, maxlength=400000, num_thread = 12, mapping = {'P
         sentences = [mapping[r] for r in results]
         return sentences
     
-    sentences = sentiment(l)
     aug_pre = naw.ContextualWordEmbsAug(model_path='roberta-base', action="substitute", aug_min=1, aug_max=3, device='cuda')
-    aug_pre2 = naw.SynonymAug(aug_src='wordnet', aug_min=1, aug_max=2)
+    aug_pre2 = naw.SynonymAug(aug_src='wordnet', aug_min=1, aug_max=1)
     aug = naf.Sometimes([
         nac.RandomCharAug(action="insert", aug_char_min=0, aug_char_max=2, aug_word_min=0, aug_word_max=2, aug_word_p=0.05, aug_char_p=0.05),
         nac.KeyboardAug(aug_char_p=0.05, aug_word_p=0.3, aug_word_min=0, aug_word_max=2, aug_char_min=0, aug_char_max=2),
         naw.SpellingAug(aug_min=0, aug_max=3, aug_p=0.05),
         ])
 
-    print(f'step 1: augmenting len(list) {len(l)} to {maxlength//6} using naw.ContextualWordEmbsAug')
-    with tqdm(total=maxlength, dynamic_ncols=True) as pbar:
+    print(f'step 1: augmenting len(list) {len(l)} to {maxlength//7} using naw.ContextualWordEmbsAug')
+    with tqdm(total=maxlength, dynamic_ncols=True, initial=len(l)) as pbar:
         l_frozen_size = len(l)
         augments = set(l)
+        sentences = sentiment_(l)
         if len(l) < maxlength//2:
 
-            while len(augments) < maxlength//4:
-                n = max(1, int(round(maxlength//4//len(l),0)))
+            while len(augments) < maxlength//7:
+                n = max(1, int(round(maxlength//6//len(l),0)))
                 for i in range(l_frozen_size):
                     potential1 = aug_pre.augment(l[i], n=n, num_thread=min(num_thread, n))
-                    pot_senti1 = sentiment(potential1)
+                    pot_senti1 = sentiment_(potential1)
                     pot_senti1 = [potential1[j] for j in range(len(potential1)) if pot_senti1[j] == sentences[i]]
                     augments.update(pot_senti1)
                     pbar.update(len(augments) - pbar.n)
-                    if len(augments) >= maxlength//4:
+                    if len(augments) >= maxlength//7:
                         break
+
+            l = [x for x in augments]
+            augments = set(l)
+            sentences = sentiment_(l)
+            l_frozen_size = len(l)
             while len(augments) < maxlength//2:
                 n = max(1, int(round(maxlength//2//len(l),0)))
                 for i in range(l_frozen_size):
                     potential2 = aug_pre2.augment(l[i], n, num_thread=1)
-                    pot_senti2 = sentiment(potential2)
+                    pot_senti2 = sentiment_(potential2)
                     pot_senti2 = [potential2[j] for j in range(len(potential2)) if pot_senti2[j] == sentences[i]]
                     augments.update(pot_senti2)
                     pbar.update(len(augments) - pbar.n)
@@ -284,34 +291,26 @@ def augment_list_till_length(l, maxlength=400000, num_thread = 12, mapping = {'P
             l = [x for x in augments]
             
         print(f'step 2: augmenting len(list) {len(l)} to {maxlength} using synonyms and spelling errors')
-        augments = set()
+        augments = set(l)
         pbar_start = pbar.n
-        length = maxlength - len(l)
-        n = max(length // len(l) - 1, 1)
-        if n > 0 and length > 0:
-            
-                while len(augments) < length:
-                    for i in range(len(l)):
-                        augs = aug.augment(l[i], n=n, num_thread=num_thread)
-                        while l[i] in augs:
-                            augs.remove(l[i])
-                        augments.update(augs)
-                        pbar.update(len(augments) - pbar.n + pbar_start)
-                        if len(augments) >= length:
-                            break
-        else:
-            return [x for x in augments]
-    # shuffle(augments)
-    augments = [x for x in augments]
-    augments = random.sample(augments, len(augments))
+        n = max(1, int(round(maxlength//len(l),0)))
+        while len(augments) < maxlength:
+            for i in range(len(l)):
+                augments.update(aug.augment(l[i], n=n, num_thread=num_thread))
+                pbar.update(len(augments) - pbar.n + pbar_start)
+                if len(augments) >= maxlength:
+                    break
+    
 
     with contextlib.redirect_stdout(io.StringIO()):
         with contextlib.suppress(Exception):
+            augments = [x for x in augments]
+            augments = random.sample(augments, len(augments))
             del aug, aug_pre, aug_pre2, augs 
         collect()
-    return augments[:length]
+    return augments[:maxlength]
 
-def parse_emotion_dataframes(selection: int = [0, 1, 2, 3, 4], ensure_only_one_label: bool = True, augment_data=True, aug_n = 400000):
+def parse_emotion_dataframes(selection: int = [0, 1, 2, 3, 4, 5], ensure_only_one_label: bool = True, augment_data=True, aug_n = 400000):
     """Parses the emotion dataframes. Normalizes each of the specific 29 dataset labels to the same label names, then combines the five of them into one dataframe. The resulting dataset is highly unbalanced, with predominant negative emotions.
     
     Args: 
@@ -321,14 +320,16 @@ def parse_emotion_dataframes(selection: int = [0, 1, 2, 3, 4], ensure_only_one_l
     Returns:
         df (pd.DataFrame): The combined dataframe of the selected datasets.
     """
-
+    df0, df1, df2, df3, df4, df5 = pd.DataFrame([]), pd.DataFrame([]), pd.DataFrame([]), pd.DataFrame([]), pd.DataFrame([]), pd.DataFrame([])
     def df_load_(file, drop_cols, new_cols, rename_cols=[]):
         """Loads the dataframe and drops the columns that are not needed."""
         df = load_file(file)
         if 'label' in df.columns:
             df = pd.get_dummies(df, columns=['label'])
+            df.columns = [x.replace('label_', '') for x in df.columns]
         if 'Emotion' in df.columns:
             df = pd.get_dummies(df, columns=['Emotion'])
+            df.columns = [x.replace('Emotion_', '') for x in df.columns]
         df = df.drop(columns=drop_cols)
         if rename_cols.__len__() > 0:
             df.columns = rename_cols
@@ -336,8 +337,7 @@ def parse_emotion_dataframes(selection: int = [0, 1, 2, 3, 4], ensure_only_one_l
             if col not in df.columns:
                 df[col] = 0
         all_emotions = list(set([x for x in df.columns[df.columns != 'text'] if x not in drop_cols]))
-
-
+        df = df.fillna(0)
         # Remove the numerical rows that add up to greater than 1 or equal to 0 and reset the index
         if ensure_only_one_label:
             e = df[all_emotions]
@@ -356,34 +356,46 @@ def parse_emotion_dataframes(selection: int = [0, 1, 2, 3, 4], ensure_only_one_l
 
     if 3 in selection:
         df3,all_emotions = df_load_('data/Emotions/test.parquet', [], all_emotions, ['text', 'anger', 'fear', 'joy', 'love', 'sadness', 'surprise'])
-
+    
     if 4 in selection:
         df4,all_emotions = df_load_('data/Emotions/dataset(clean).parquet', ['Original Content'], all_emotions, ['text','anger', 'disappointment', 'happiness'])
 
+    if 5 in selection:
+        # 0: 'neutral', 1: 'anger', 2: 'disgust', 3: 'fear', 4: 'happiness', 5: 'sadness', 6: 'surprise'
+        df5, all_emotions = df_load_('data/Emotions/dailydialog.parquet', [], all_emotions, [])
 
-    df = pd.concat([df0, df1, df2, df3, df4], ignore_index=True)
+
+    df = pd.concat([df0, df1, df2, df3, df4, df5], ignore_index=True)
     df = df.drop_duplicates(subset=['text'])
-    df = df.reset_index(drop=True)
     df.fillna(0, inplace=True)
+    df = df.reset_index(drop=True)
     df_augs = pd.DataFrame(columns=df.columns)
 
+
+    x_train, x_test, y_train, y_test = train_test_split(df.text.values, df[all_emotions].values, test_size=0.2, random_state=42, stratify=df[all_emotions].values)
+    df_train = pd.DataFrame({'text': x_train})
+    df_test = pd.DataFrame({'text': x_test})
+    for i in range(len(all_emotions)):
+        df_train[all_emotions[i]] = y_train[:, i]
+        df_test[all_emotions[i]] = y_test[:, i]
+
     if augment_data:
-        subset_lists_per_label = {df.columns[1:].tolist()[i]: df[df.columns[1:].tolist()[i]] == 1 for i in range(len(df.columns[1:].tolist()))}
+        subset_lists_per_label = {df_train.columns[1:].tolist()[i]: df_train[df_train.columns[1:].tolist()[i]] == 1 for i in range(len(df_train.columns[1:].tolist()))}
         for label in subset_lists_per_label:
-            subset_to_add = df[subset_lists_per_label[label]].text.values.tolist()
+            subset_to_add = df_train[subset_lists_per_label[label]].text.values.tolist()
 
             subset_to_add = augment_list_till_length(subset_to_add, num_thread=12, maxlength=aug_n)
             subset_labels = [1]* len(subset_to_add)
 
             subset = pd.DataFrame({'text': subset_to_add, label: subset_labels})
             df_augs = pd.concat([df_augs, subset], ignore_index=True)
-            df_augs.fillna(0, inplace=True)
-            df_augs.drop_duplicates(subset=['text'], inplace=True)
 
             df_augs = df_augs[~df_augs.text.isin(df.text.values.tolist())]
+            df_augs.fillna(0, inplace=True)
+            df_augs.drop_duplicates(subset=['text'], inplace=True)
             df_augs = df_augs.reset_index(drop=True)
 
-    return df, df_augs
+    return df_train, df_test, df_augs
 
 def df_to_datetime(df: pd.DataFrame, offset_days: int = 0):
     if not isinstance(df.index, pd.DatetimeIndex):
@@ -763,49 +775,57 @@ def get_emotion_df(MODEL:str=f"cardiffnlp/twitter-xlm-roberta-base-sentiment", a
     
     Returns:
         pd.DataFrame"""
-    if os.path.exists('data/Emotions/classes_df.parquet') and os.path.exists('data/Emotions/x_df.parquet') and os.path.exists('data/Emotions/y_df.parquet') and augment == False:
-        #emotion_df = load_file('data/Emotions/emotion_df.parquet')
+    if os.path.exists('data/Emotions/classes_df.parquet') and os.path.exists('data/Emotions/x_train_df.parquet') and os.path.exists('data/Emotions/y_train_df.parquet') and augment == False:
+        #df_train = load_file('data/Emotions/df_train.parquet')
         classes = load_file('data/Emotions/classes_df.parquet').values.flatten().tolist()
-        sentences = load_file('data/Emotions/x_df.parquet').values.flatten().tolist()
-        emotions = load_file('data/Emotions/y_df.parquet').values.flatten().tolist()
+        sentences_train = load_file('data/Emotions/x_train_df.parquet').values.flatten().tolist()
+        sentences_test = load_file('data/Emotions/x_test_df.parquet').values.flatten().tolist()
+        emotions_train = load_file('data/Emotions/y_train_df.parquet').values.flatten().tolist()
+        emotions_test = load_file('data/Emotions/y_test_df.parquet').values.flatten().tolist()
         emotions_augs = []
         sentences_augs = []
-    elif os.path.exists('data/Emotions/classes_df.parquet') and os.path.exists('data/Emotions/x_df.parquet') and os.path.exists('data/Emotions/y_df.parquet') and augment == True and os.path.exists('data/Emotions/x_augs_df.parquet') and os.path.exists('data/Emotions/y_augs_df.parquet'):
+    elif os.path.exists('data/Emotions/classes_df.parquet') and os.path.exists('data/Emotions/x_train_df.parquet') and os.path.exists('data/Emotions/y_train_df.parquet') and augment == True and os.path.exists('data/Emotions/x_augs_df.parquet') and os.path.exists('data/Emotions/y_augs_df.parquet'):
         classes = load_file('data/Emotions/classes_df.parquet').values.flatten().tolist()
-        sentences = load_file('data/Emotions/x_df.parquet').values.flatten().tolist()
-        emotions = load_file('data/Emotions/y_df.parquet').values.flatten().tolist()
+        sentences_train = load_file('data/Emotions/x_train_df.parquet').values.flatten().tolist()
+        sentences_test = load_file('data/Emotions/x_test_df.parquet').values.flatten().tolist()
+        emotions_train = load_file('data/Emotions/y_train_df.parquet').values.flatten().tolist()
+        emotions_test = load_file('data/Emotions/y_test_df.parquet').values.flatten().tolist()
         emotions_augs = load_file('data/Emotions/y_augs_df.parquet').values.flatten().tolist()
         sentences_augs = load_file('data/Emotions/x_augs_df.parquet').values.flatten().tolist()
     else:
-        emotion_df, df_augs = parse_emotion_dataframes([0, 1, 2, 3, 4], ensure_only_one_label=True, augment_data=augment, aug_n = aug_n)
+        df_train, df_test, df_augs = parse_emotion_dataframes([0, 1, 2, 3, 4, 5], ensure_only_one_label=True, augment_data=augment, aug_n = aug_n)
 
-        emotion_df = emotion_df.drop_duplicates(subset=['text'])
-        if augment: df_augs = df_augs.drop_duplicates(subset=['text'])
-        else: sentences_augs, emotions_augs = [], []
+        df_train = df_train.drop_duplicates(subset=['text'])
+        df_test = df_test.drop_duplicates(subset=['text'])
+        df_augs.drop_duplicates(subset=['text'])
 
-        emotion_df.fillna(0, inplace=True)
-        if augment: df_augs.fillna(0,inplace=True)
-        classes = emotion_df.columns[1:].values.tolist()
+        if not augment: sentences_augs, emotions_augs = [], []
+        classes = df_train.columns[1:].values.tolist()
+        sentences_test = df_test.text.values
+        sentences_test = get_sentence_vectors(sentences_test, MODEL)
+        sentences_train = df_train.text.values
+        sentences_train = get_sentence_vectors(sentences_train, MODEL)
 
-        sentences = emotion_df.text.values
-        sentences = get_sentence_vectors(sentences, MODEL)
         if augment: 
             sentences_augs = df_augs.text.values
             sentences_augs = get_sentence_vectors(sentences_augs, MODEL)
 
-        emotions = emotion_df.drop('text', axis=1, inplace=False).values.tolist()
+        emotions_train = df_train.drop('text', axis=1, inplace=False).values.tolist()
+        emotions_test = df_test.drop('text', axis=1, inplace=False).values.tolist()
         if augment: emotions_augs = df_augs.drop('text', axis=1, inplace=False).values.tolist()
 
         
         if not os.path.exists('data/Emotions/classes_df.parquet'): save_file(classes, 'data/Emotions/classes_df.parquet')
-        if not os.path.exists('data/Emotions/x_df.parquet'): save_file(sentences, 'data/Emotions/x_df.parquet')
-        if not os.path.exists('data/Emotions/y_df.parquet'): save_file(emotions, 'data/Emotions/y_df.parquet')
+        if not os.path.exists('data/Emotions/x_df.parquet'): save_file(sentences_train, 'data/Emotions/x_train_df.parquet')
+        if not os.path.exists('data/Emotions/y_df.parquet'): save_file(emotions_train, 'data/Emotions/y_train_df.parquet')
+        if not os.path.exists('data/Emotions/x_test_df.parquet'): save_file(sentences_test, 'data/Emotions/x_test_df.parquet')
+        if not os.path.exists('data/Emotions/y_test_df.parquet'): save_file(emotions_test, 'data/Emotions/y_test_df.parquet')
         if augment:
             if not os.path.exists('data/Emotions/y_augs_df.parquet'): save_file(emotions_augs, 'data/Emotions/y_augs_df.parquet')
             if not os.path.exists('data/Emotions/x_augs_df.parquet'): save_file(sentences_augs, 'data/Emotions/x_augs_df.parquet')
         
 
-    return sentences, emotions, sentences_augs, emotions_augs, classes
+    return sentences_train, emotions_train, sentences_test, emotions_test, sentences_augs, emotions_augs, classes
 
 class create_triplets():
     """Converts (x,y) to (anchor,positive,negative) where anchor and positive are positive examples and negative is a negative example. 
@@ -957,43 +977,30 @@ def get_datasets(kaggle_api_key, data_nasdaq_key=None):
             dest_name='Text',
             min_files_expected=3)
 
-    if False:
-        # slang datasets
-        download_dataset(
-                'https://www.kaggle.com/datasets/rtatman/spelling-variation-on-urban-dictionary', 
-                kaggle_api_key, 
-                files_to_move={'spelling_variants_valid.csv': 'Slang/spelling_variants_valid.csv'},
-                delete=True,
-                dest_name='Slang',
-                min_files_expected=1
-                )
+    if not os.path.exists('data/Emotions/dailydialog.parquet'):
+        print('Downloading DailyDialog dataset...')
+        download_file('http://yanran.li/files/ijcnlp_dailydialog.zip', 'ijcnlp_dailydialog.zip', 'data/Emotions/')
 
-        download_dataset(
-                'https://www.kaggle.com/datasets/gowrishankarp/chat-slang-abbreviations-acronyms', 
-                kaggle_api_key, 
-                files_to_move={'slang.csv': 'Slang/slang.csv'},
-                delete=True,
-                dest_name='Slang',
-                min_files_expected=2
-                )
-
-        download_dataset(
-                'https://www.kaggle.com/datasets/rizdelhi/socialmediaabbrevations', 
-                kaggle_api_key, 
-                files_to_move={'abbrevations.csv': 'Slang/abbrevations.csv'},
-                delete=True,
-                dest_name='Slang',
-                min_files_expected=3
-                )
-
-        download_dataset(
-                'https://www.kaggle.com/datasets/gogylogy/twitterslang', 
-                kaggle_api_key, 
-                files_to_move={'twitterSlang.csv': 'Slang/twitterSlang.csv'},
-                delete=True,
-                dest_name='Slang',
-                min_files_expected=4
-                )
+        # extract the zip file
+        with zipfile.ZipFile('data/Emotions/ijcnlp_dailydialog.zip', 'r') as zip_ref:
+            zip_ref.extractall('data/Emotions/')
+        for f in os.listdir('data/Emotions/ijcnlp_dailydialog/'):
+            if '.zip' in f or 'act' in f or 'topic' in f or 'readme' in f:
+                os.remove('data/Emotions/ijcnlp_dailydialog/'+f)
+        # read data\Emotions\ijcnlp_dailydialog\dialogues_text.txt, remove \n, split('__eou__')
+        with open('data\Emotions\ijcnlp_dailydialog\dialogues_emotion.txt', 'r', encoding='utf-8') as f:
+            labels = [{ 0: 'neutral', 1: 'anger', 2: 'disgust', 3: 'fear', 4: 'happiness', 5: 'sadness', 6: 'surprise'}[int(x)] for x in f.read().replace('\n', ' ').split(' ') if x.isnumeric()]
+            # check that x is numeric
+        with open('data/Emotions/ijcnlp_dailydialog/dialogues_text.txt', 'r', encoding='utf-8') as f:
+            text = f.read().replace('\n', '').replace('.', '').replace(' ’ ', r"'").replace(' , ', r", ").replace(' ? ', '? ').replace(' ! ', '! ').replace(' : ', ': ').replace(' ; ', '; ').replace('  ', ' ')
+            # remove trailing spaces
+        text = [x.strip() for x in text.split('__eou__') if x.strip() != '']
+        assert len(text) == len(labels)
+        df = pd.DataFrame({'text': text, 'label': labels})
+        save_file(df, 'data/Emotions/dailydialog.parquet')
+        shutil.rmtree('data/Emotions/ijcnlp_dailydialog')
+        os.remove('data/Emotions/ijcnlp_dailydialog.zip')
+        del df, text, labels
     
     print('Converting project files to parquet')
     convert_project_files_to_parquet()
@@ -1042,9 +1049,8 @@ def download_file(url, filename, move_to=None):
         url (str): The url to download the file from.
         filename (str): The filename to save the file to.
     """
+    
     if not os.path.exists(move_to + filename) and not os.path.exists(move_to + filename.replace(filename.split('.')[-1], 'parquet')):
-        # create the directory if it doesn't exist
-        
         with urllib.request.urlopen(url) as response, open(filename, 'wb') as out_file:
             data = response.read() # a `bytes` object
             out_file.write(data)
