@@ -323,8 +323,8 @@ class classify_single_input(nn.Module):
     def __init__(self, siamese_network):
         super().__init__()
         self.siamese_network = siamese_network
-        intermediate_size = max(self.siamese_networkk.classes*2, self.siamese_networkk.vector_size//2,  4)
-        self.intermediate_layer = nn.Linear(self.siamese_networkk.vector_size, intermediate_size)
+        intermediate_size = max(self.siamese_network.classes*2, self.siamese_network.vector_size//2,  4)
+        self.intermediate_layer = nn.Linear(self.siamese_network.vector_size, intermediate_size)
         self.head = nn.Linear(intermediate_size, self.siamese_network.classes)
 
     def forward(self, x):
