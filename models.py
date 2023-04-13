@@ -53,7 +53,7 @@ class siamese_network(nn.Module):
         
         return anchor, positive, negative
 
-def pre_train_using_siamese(train_triplets, test_triplets, siamese_model, classes, epochs=4, print_every=500, history= {'train': [], 'test': []}, criterion=torch.nn.CrossEntropyLoss()):
+def pre_train_using_siamese(train_triplets, test_triplets, siamese_model, classes, epochs=4, print_every=500, history= {'train': [], 'test': []}, criterion=None):
     """Pret-train the emotion classifier (the weights prior to the final layer) using a siamese network in order to ensure the classifier has an easier job.
     
     Triplet test is currenetly not used due to a bug somewhere in the code.
@@ -77,7 +77,10 @@ def pre_train_using_siamese(train_triplets, test_triplets, siamese_model, classe
     print(f'trainable: {[name for name, param in siamese_model.named_parameters() if param.requires_grad]}')
 
     optimizer=torch.optim.Adam(siamese_model.parameters(), lr=0.0001)
-    contrastive_loss = torch.nn.TripletMarginWithDistanceLoss(margin=siamese_model.vector_size,reduction='mean', distance_function=nn.PairwiseDistance(p=2.0, eps=1e-06, keepdim=False))
+    if criterion is None:
+        contrastive_loss = torch.nn.TripletMarginWithDistanceLoss(margin=siamese_model.vector_size,reduction='mean', distance_function=nn.PairwiseDistance(p=2.0, eps=1e-06, keepdim=False))
+    else:
+        contrastive_loss = criterion
     for epoch in range(epochs):
         running_loss = 0.0
         for i in tqdm(range(train_triplets.num_batches)):
@@ -105,6 +108,71 @@ def pre_train_using_siamese(train_triplets, test_triplets, siamese_model, classe
                 running_loss = 0.0
                 
     return siamese_model, history
+
+def test_siamese_model(model, test_triplets, print_every=100, history= {'test': []}, criterion=None):
+    """Test the siamese network model
+    
+    Arguments:
+        model {nn.Module} -- The siamese network model
+        test_triplets {Triplets} -- The testing triplets generator
+        print_every {int} -- How often to print the loss
+        history {dict} -- A dictionary to store the loss history
+        criterion {nn.Module} -- The loss function
+
+    Returns:
+        nn.Module -- The siamese network model
+        history -- The loss history dictionary
+        """
+    if criterion == None:
+        contrastive_loss = torch.nn.TripletMarginWithDistanceLoss(margin=model.vector_size,reduction='mean', distance_function=nn.PairwiseDistance(p=2.0, eps=1e-06, keepdim=False))
+    else:
+        contrastive_loss = criterion
+
+    with torch.no_grad():
+        valid_loss = 0.0
+        for i in range(test_triplets.num_batches):
+            [anchor, positive, negative], anchor_class = test_triplets.get_batch()
+            output1, output2, output3 = model(anchor, positive, negative)
+            loss = contrastive_loss(output1, output2, output3)
+            valid_loss += loss.item()
+            if i in [test_triplets.num_batches - 1, 0] or i % print_every == 0:
+                print(f"Complete {i + 1} / {test_triplets.num_batches}.", valid_loss / print_every, end='\r')
+                history['test'].append(valid_loss / print_every)
+                valid_loss = 0.0
+
+    # print mean loss over the entire test set
+    print(f"Test loss: {np.mean(history['test'])}")
+    return history
+
+def test_emotion_classifier(model, ds_test, print_every=100, history= {'test': []}, criterion=torch.nn.CrossEntropyLoss()):
+    """Test the emotion classifier model
+    
+    Arguments:
+        model {nn.Module} -- The emotion classifier model
+        ds_test {torch.utils.data.Dataset} -- The testing dataset
+        print_every {int} -- How often to print the loss
+        history {dict} -- A dictionary to store the loss history
+        criterion {nn.Module} -- The loss function
+
+    Returns:
+        nn.Module -- The emotion classifier model
+        history -- The loss history dictionary
+        """
+    with torch.no_grad():
+        valid_loss = 0.0
+        for i in range(len(ds_test)):
+            anchor, anchor_class = ds_test[i]
+            output = model(anchor)
+            loss = criterion(output, anchor_class)
+            valid_loss += loss.item()
+            if i in [len(ds_test) - 1, 0] or i % print_every == 0:
+                print(f"Complete {i + 1} / {len(ds_test)}.", valid_loss / print_every, end='\r')
+                history['test'].append(valid_loss / print_every)
+                valid_loss = 0.0
+
+    # print mean loss over the entire test set
+    print(f"Test loss: {np.mean(history['test'])}")
+    return history
 
 def train_emotion_classifier(model, ds_train, ds_test, epochs=2, print_every=500, history= {'train': [], 'test': []}, criterion=torch.nn.CrossEntropyLoss()):
     """Train the emotion classifier using the siamese network weights as a starting point. This only updates the final layer of the model.
