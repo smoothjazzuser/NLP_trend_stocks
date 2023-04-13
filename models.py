@@ -53,7 +53,7 @@ class siamese_network(nn.Module):
         
         return anchor, positive, negative
 
-def pre_train_using_siamese(train_triplets, test_triplets, siamese_model, classes, epochs=4, print_every=500, history= {'train': [], 'test': []}, criterion=None):
+def pre_train_using_siamese(train_triplets, test_triplets, siamese_model, classes, epochs=4, print_every=100, history= {'train': [], 'test': []}, criterion=None):
     """Pret-train the emotion classifier (the weights prior to the final layer) using a siamese network in order to ensure the classifier has an easier job.
     
     Triplet test is currenetly not used due to a bug somewhere in the code.
@@ -216,7 +216,7 @@ def train_emotion_classifier(model, ds_train, ds_test, epochs=2, print_every=500
                 with torch.no_grad():
                     valid_loss = 0.0
                     # validation set random batch of size print_every, 
-                    for _ in range(print_every):
+                    for _ in range(print_every // 3):
                         x, y = next(iter(ds_test))
                         y_pred = model(x)
                         loss = criterion(y_pred, y)
