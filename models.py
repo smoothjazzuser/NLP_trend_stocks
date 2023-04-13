@@ -174,7 +174,7 @@ def test_emotion_classifier(model, ds_test, print_every=100, history= {'test': [
     print(f"Test loss: {np.mean(history['test'])}")
     return history
 
-def train_emotion_classifier(model, ds_train, ds_test, epochs=2, print_every=500, history= {'train': [], 'test': []}, criterion=torch.nn.CrossEntropyLoss()):
+def train_emotion_classifier(model, ds_train, ds_test, epochs=2, print_every=500, history= {'train': [], 'test': []}, criterion=torch.nn.CrossEntropyLoss(), early_stopping=True, patience=100):
     """Train the emotion classifier using the siamese network weights as a starting point. This only updates the final layer of the model.
     
     Arguments:
@@ -203,12 +203,16 @@ def train_emotion_classifier(model, ds_train, ds_test, epochs=2, print_every=500
     criterion = torch.nn.CrossEntropyLoss()
     test_batches = len(ds_test)
     train_batches = len(ds_train)
+    
+    patience_ = patience
+    if early_stopping:
+        best_loss = np.inf
 
     # train classify_single_input. This uses binart cross entropy loss
     for epoch in range(epochs):
         running_loss = 0.0
         valid_loss = 0.0
-        i = 0 
+        batch_num = 0 
         for batch in tqdm(ds_train, total=len(ds_train) * epochs):
             optimizer.zero_grad()
             x, y = batch
@@ -218,7 +222,7 @@ def train_emotion_classifier(model, ds_train, ds_test, epochs=2, print_every=500
             optimizer.step()
             running_loss += loss.item()
             
-            if i in [train_batches - 1, 0] or i % print_every == 0:
+            if batch_num in [train_batches - 1, 0] or batch_num % print_every == 0:
                 with torch.no_grad():
                     valid_loss = 0.0
                     # validation set random batch of size print_every, 
@@ -227,12 +231,32 @@ def train_emotion_classifier(model, ds_train, ds_test, epochs=2, print_every=500
                         y_pred = model(x)
                         loss = criterion(y_pred, y)
                         valid_loss += loss.item()
-                    history['test'].append(valid_loss / print_every / 3)
-
-                print(f"Complete {epoch * train_batches + i + 1} / {epochs * train_batches}. Epoch {epoch + 1} / {epochs}.", i + 1, running_loss / print_every, "val loss:" , history['test'][-1], end='\r')
+                    history['test'].append(valid_loss / (print_every // 3))
+                    running_loss = 0.0
+                print(f"Complete {epoch * train_batches + batch_num + 1} / {epochs * train_batches}. Epoch {epoch + 1} / {epochs}.", batch_num + 1, running_loss / print_every, "val loss:" , history['test'][-1], f'patience: {patience_}/{patience}', end='\r')
                 history['train'].append(running_loss / print_every)
-                running_loss = 0.0
-            i += 1
+                
+            batch_num += 1
+
+            
+            if not early_stopping:
+                continue
+
+            if batch_num % print_every == 0:
+                if history['test'][-1] < best_loss:
+                        best_loss = history['test'][-1]
+                        best_weights = model.state_dict()
+                        patience_ = patience
+                elif patience_ == 0:
+                    print("Early stopping, restoring best weights")
+                    model.load_state_dict(best_weights)
+                    return model, history
+                elif history['test'][-1] > best_loss or history['test'][-1] == 0 or np.isnan(history['test'][-1]) or np.isinf(history['test'][-1]):
+                    patience_ -= 1
+    
+    if early_stopping and history['test'][-1] < best_loss:
+        model.load_state_dict(best_weights)
+        print(f"restoring weight from batch {np.argmin(history['test']) * print_every} with loss {best_loss}")
 
     return model, history
 
@@ -299,12 +323,17 @@ class classify_single_input(nn.Module):
     def __init__(self, siamese_network):
         super().__init__()
         self.siamese_network = siamese_network
-        self.head = nn.Linear(self.siamese_network.vector_size, self.siamese_network.classes)
+        intermediate_size = max(self.siamese_networkk.classes*2, self.siamese_networkk.vector_size//2,  4)
+        self.intermediate_layer = nn.Linear(self.siamese_networkk.vector_size, intermediate_size)
+        self.head = nn.Linear(intermediate_size, self.siamese_network.classes)
 
     def forward(self, x):
         inp = self.siamese_network.siamese_shared_weights(x)
         out = inp[0][:, 0, :]
         out = torch.nn.functional.gelu(out)
         out = self.siamese_network.head1(out)
+        out = torch.nn.functional.gelu(out)
+        out = self.intermediate_layer(out)
+        out = torch.nn.functional.gelu(out)
         out = self.head(out)
         return out
