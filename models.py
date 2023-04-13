@@ -232,9 +232,10 @@ def train_emotion_classifier(model, ds_train, ds_test, epochs=2, print_every=500
                         loss = criterion(y_pred, y)
                         valid_loss += loss.item()
                     history['test'].append(valid_loss / (print_every // 3))
-                    running_loss = 0.0
+                    
                 print(f"Complete {epoch * train_batches + batch_num + 1} / {epochs * train_batches}. Epoch {epoch + 1} / {epochs}.", batch_num + 1, running_loss / print_every, "val loss:" , history['test'][-1], f'patience: {patience_}/{patience}', end='\r')
                 history['train'].append(running_loss / print_every)
+                running_loss = 0.0
                 
             batch_num += 1
 
