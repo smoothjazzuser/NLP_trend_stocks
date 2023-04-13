@@ -190,6 +190,12 @@ def train_emotion_classifier(model, ds_train, ds_test, epochs=2, print_every=500
         nn.Module -- The emotion classifier model
         history -- The loss history dictionary
         """
+
+    assert print_every > 3 and print_every < len(ds_train), "print_every must be between 3 and the length of the dataset"
+    assert epochs > 0, "epochs must be greater than 0"
+    assert len(ds_train) > 0, "ds_train must have at least one element"
+    assert len(ds_test) > 0, "ds_test must have at least one element"
+    
     for param in model.siamese_network.parameters():
             param.requires_grad = False
     print(f'trainable: {[name for name, param in model.named_parameters() if param.requires_grad]}')
@@ -221,7 +227,7 @@ def train_emotion_classifier(model, ds_train, ds_test, epochs=2, print_every=500
                         y_pred = model(x)
                         loss = criterion(y_pred, y)
                         valid_loss += loss.item()
-                    history['test'].append(valid_loss / print_every)
+                    history['test'].append(valid_loss / print_every / 3)
 
                 print(f"Complete {epoch * train_batches + i + 1} / {epochs * train_batches}. Epoch {epoch + 1} / {epochs}.", i + 1, running_loss / print_every, "val loss:" , history['test'][-1], end='\r')
                 history['train'].append(running_loss / print_every)
