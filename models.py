@@ -12,6 +12,7 @@ from tqdm.notebook import tqdm
 from utils import get_emotion_df, create_triplets
 import random
 import copy
+import contextlib
 
 class siamese_network(nn.Module):
     """Instantiate the xlm-roberta-base-sentiment model and add a siamese network head to it to replace the sentiment classifier head with emotion classifier head. Allowes for the model to later be altered to train on non-triplet data after pre-training on triplet data.
@@ -20,14 +21,14 @@ class siamese_network(nn.Module):
         classes {int} -- The number of classes to classify into
         vector_size {int} -- The size of the vector to output from the siamese network. This is the size of the vector that will be used to train the emotion classifier.
         model {str} -- The pretrained model to use. Defaults to "cardiffnlp/twitter-xlm-roberta-base-sentiment"."""
-    def __init__(self, classes, vector_size=120, MODEL=f"cardiffnlp/twitter-xlm-roberta-base-sentiment"):
+    def __init__(self, classes, vector_size=120, MODEL=f"cardiffnlp/twitter-xlm-roberta-base-sentiment", head=False):
         super().__init__()
         self.MODEL = MODEL
+        self.head = head
         self.config = AutoConfig.from_pretrained(MODEL)
         self.classes = classes
         self.vector_size = vector_size
-        self.base = AutoModelForSequenceClassification.from_pretrained(self.MODEL, num_labels=self.classes, ignore_mismatched_sizes=True, is_decoder = False)
-
+        self.base = AutoModelForSequenceClassification.from_pretrained(self.MODEL, ignore_mismatched_sizes=True, is_decoder = False) #num_labels=self.classes, 
         # delete the head of the model so that we can add our own
         del self.base.classifier
 
@@ -36,6 +37,7 @@ class siamese_network(nn.Module):
         self.head1 = nn.Linear(self.config.hidden_size, vector_size)
         self.head2 = nn.Linear(self.config.hidden_size, vector_size)
         self.head3 = nn.Linear(self.config.hidden_size, vector_size)
+        self.alphadropout = nn.AlphaDropout(p=0.1)
         
     def forward(self, x1, x2, x3):
         inp1 = self.siamese_shared_weights(x1)
@@ -44,16 +46,21 @@ class siamese_network(nn.Module):
         inp1 = inp1[0][:, 0, :]
         inp2 = inp2[0][:, 0, :]
         inp3 = inp3[0][:, 0, :]
-        # apply gelu 
-        inp1 = torch.nn.functional.gelu(inp1)
-        inp2 = torch.nn.functional.gelu(inp2)
-        inp3 = torch.nn.functional.gelu(inp3)
-        anchor = self.head1(inp1)
-        positive = self.head2(inp2)
-        negative = self.head3(inp3)
-        #anchor = torch.nn.functional.gelu(anchor)
-        #positive = torch.nn.functional.gelu(positive)
-        #negative = torch.nn.functional.gelu(negative)
+        if self.head:
+            inp1 = self.alphadropout(inp1)
+            inp2 = self.alphadropout(inp2)
+            inp3 = self.alphadropout(inp3)
+            anchor = self.head1(inp1)
+            positive = self.head2(inp2)
+            negative = self.head3(inp3)
+        else:
+            anchor = inp1
+            positive = inp2
+            negative = inp3
+
+        anchor = torch.nn.functional.softmax(anchor, dim=1)
+        positive = torch.nn.functional.softmax(positive, dim=1)
+        negative = torch.nn.functional.softmax(negative, dim=1)
         
         return anchor, positive, negative
 
@@ -76,17 +83,22 @@ def pre_train_using_siamese(train_triplets, test_triplets, siamese_model, classe
         nn.Module -- The siamese network model
         history -- The loss history dictionary
         """
+    bs = train_triplets.batch_size
+    siamese_model.train()
     for param in siamese_model.base.parameters():
         param.requires_grad = False
+
+    for name, param in siamese_model.base.roberta.encoder.layer[11].named_parameters():
+        param.requires_grad = True
 
     print(f'trainable: {[name for name, param in siamese_model.named_parameters() if param.requires_grad]}')
     if early_stopping:
         best_loss = np.inf
         patience_counter = 0
 
-    optimizer=torch.optim.Adam(siamese_model.parameters(), lr=0.0001)
+    optimizer=torch.optim.Adam(siamese_model.parameters(), lr=0.001)
     if criterion is None:
-        contrastive_loss = torch.nn.TripletMarginWithDistanceLoss(margin=0.01,reduction='mean', distance_function=nn.CosineSimilarity())
+        contrastive_loss = torch.nn.TripletMarginWithDistanceLoss(margin=1, swap=False, reduction='sum', distance_function=torch.nn.PairwiseDistance(p=1, eps=1e-06, keepdim=False))
     else:
         contrastive_loss = criterion
     for epoch in range(epochs):
@@ -100,24 +112,28 @@ def pre_train_using_siamese(train_triplets, test_triplets, siamese_model, classe
             optimizer.step()
             running_loss += loss.item()
             
-            if i in [train_triplets.num_batches - 1, 0] or i % print_every == 0:
+            if (i in [train_triplets.num_batches - 1] or i % print_every == 0) and i != 0:
                 with torch.no_grad():
+                    # turn off dropout, but only for this loop
+                    siamese_model.eval()
                     valid_loss = 0.0
                     for i in range(print_every):
                         [anchor, positive, negative], anchor_class = test_triplets.get_batch()
                         output1, output2, output3 = siamese_model(anchor, positive, negative)
                         loss = contrastive_loss(output1, output2, output3)
                         valid_loss += loss.item()
-                    history['test'].append(valid_loss / print_every)
+                    history['test'].append(valid_loss / print_every * bs)
+                    siamese_model.train()
                     
-
-                print(f"Complete {epoch * train_triplets.num_batches + i + 1} / {epochs * train_triplets.num_batches}. Epoch {epoch + 1} / {epochs}.", running_loss / print_every, "val loss:" , history['test'][-1], end='\r')
+                print(f"train loss: {running_loss / print_every}, val loss: {history['test'][-1]}, patience {patience_counter}/{patience}", end='\r', flush=True)
                 history['train'].append(running_loss / print_every)
                 running_loss = 0.0
 
                 if not early_stopping:
                     continue
 
+                if history['test'][-1] == 0.0:
+                    best_weights = copy.deepcopy(siamese_model.state_dict())
                 if history['test'][-1] < best_loss:
                     best_loss = history['test'][-1]
                     best_weights = copy.deepcopy(siamese_model.state_dict())
@@ -135,7 +151,10 @@ def pre_train_using_siamese(train_triplets, test_triplets, siamese_model, classe
                     siamese_model.load_state_dict(best_weights)
                     return siamese_model, history
 
-                
+    if early_stopping:
+        print(f'Early stopping: restoring best weights with test loss {best_loss}')
+        siamese_model.load_state_dict(best_weights)
+    siamese_model.eval()  
     return siamese_model, history
 
 def test_siamese_model(model, test_triplets, print_every=100, history= {'test': []}, criterion=None):
@@ -225,8 +244,12 @@ def train_emotion_classifier(model, ds_train, ds_test, epochs=2, print_every=500
     assert len(ds_train) > 0, "ds_train must have at least one element"
     assert len(ds_test) > 0, "ds_test must have at least one element"
     
-    for param in model.siamese_network.parameters():
+    model.train()
+    for name, param in model.siamese_network.parameters():
             param.requires_grad = False
+    #for name, param in model.siamese_network.base.roberta.encoder.layer[11].named_parameters():
+        #param.requires_grad = True
+
     print(f'trainable: {[name for name, param in model.named_parameters() if param.requires_grad]}')
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
     test_batches = len(ds_test)
@@ -252,6 +275,7 @@ def train_emotion_classifier(model, ds_train, ds_test, epochs=2, print_every=500
             
             if batch_num in [train_batches - 1, 0] or batch_num % print_every == 0:
                 with torch.no_grad():
+                    model.eval()
                     valid_loss = 0.0
                     # validation set random batch of size print_every, 
                     for _ in range(print_every//2):
@@ -260,6 +284,7 @@ def train_emotion_classifier(model, ds_train, ds_test, epochs=2, print_every=500
                         loss = criterion(y_pred, y)
                         valid_loss += loss.item()
                     history['test'].append(valid_loss / (print_every//2))
+                    model.train()
                     
                 print(f"Complete {epoch * train_batches + batch_num + 1} / {epochs * train_batches}. Epoch {epoch + 1} / {epochs}.", batch_num + 1, running_loss / print_every, "val loss:" , history['test'][-1], f'patience: {patience_}/{patience}', end='\r')
                 history['train'].append(running_loss / print_every)
@@ -288,7 +313,7 @@ def train_emotion_classifier(model, ds_train, ds_test, epochs=2, print_every=500
     if early_stopping and history['test'][-1] < best_loss:
         model.load_state_dict(best_weights)
         print(f"restoring weight from batch {np.argmin(history['test']) * print_every} with loss {best_loss}")
-
+    model.eval()
     return model, history
 
 def prep_triplet_data(MODEL=f"cardiffnlp/twitter-xlm-roberta-base-sentiment", augment=True, aug_n = 400000):
@@ -321,7 +346,7 @@ def prep_triplet_data(MODEL=f"cardiffnlp/twitter-xlm-roberta-base-sentiment", au
 
     x_train, y_train, x_test, y_test = x_train.to(cuda), y_train.to(cuda), x_test.to(cuda), y_test.to(cuda)
 
-    train_triplets = create_triplets(x_train, y_train, batch_size=64, shuffle=True, seed=42)
+    train_triplets = create_triplets(x_train, y_train, batch_size=32, shuffle=True, seed=42)
     test_triplets =  create_triplets(x_test, y_test, batch_size=1, shuffle=True, seed=42)
 
     
@@ -354,18 +379,16 @@ class classify_single_input(nn.Module):
     def __init__(self, siamese_network):
         super().__init__()
         self.siamese_network = siamese_network
-        intermediate_size = max(self.siamese_network.classes*2, self.siamese_network.vector_size//2,  4)
-        self.intermediate_layer = nn.Linear(self.siamese_network.vector_size, intermediate_size)
-        self.head = nn.Linear(intermediate_size, self.siamese_network.classes)
+        self.head = nn.LazyLinear(self.siamese_network.classes)
+        self.alphadropout = nn.AlphaDropout(p=0.1)
 
     def forward(self, x):
         inp = self.siamese_network.siamese_shared_weights(x)
         out = inp[0][:, 0, :]
-        out = torch.nn.functional.gelu(out)
-        out = self.siamese_network.head1(out)
-        #out = torch.nn.functional.gelu(out)
-        out = self.intermediate_layer(out)
-        out = torch.nn.functional.gelu(out)
+        out = self.alphadropout(out)
+        if self.siamese_network.head:
+            out = self.siamese_network.head1(out)
+        out = torch.nn.functional.softmax(out, dim=1)
         out = self.head(out)
         out = torch.nn.functional.softmax(out, dim=1)
         return out
