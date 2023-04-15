@@ -25,7 +25,7 @@ class siamese_network(nn.Module):
         super().__init__()
         self.MODEL = MODEL
         self.head = head
-        self.config = AutoConfig.from_pretrained(MODEL)
+        self.config = AutoConfig.from_pretrained(MODEL, num_labels=classes, is_decoder = False, fine_tuning_task = 'text-classification')
         self.classes = classes
         self.vector_size = vector_size
         self.base = AutoModelForSequenceClassification.from_pretrained(self.MODEL, ignore_mismatched_sizes=True, is_decoder = False) #num_labels=self.classes, 
@@ -35,8 +35,6 @@ class siamese_network(nn.Module):
         # add a shared layer for the siamese network
         self.siamese_shared_weights = self.base.roberta
         self.head1 = nn.Linear(self.config.hidden_size, vector_size)
-        self.head2 = nn.Linear(self.config.hidden_size, vector_size)
-        self.head3 = nn.Linear(self.config.hidden_size, vector_size)
         self.alphadropout = nn.AlphaDropout(p=0.1)
         
     def forward(self, x1, x2, x3):
@@ -51,8 +49,8 @@ class siamese_network(nn.Module):
             inp2 = self.alphadropout(inp2)
             inp3 = self.alphadropout(inp3)
             anchor = self.head1(inp1)
-            positive = self.head2(inp2)
-            negative = self.head3(inp3)
+            positive = self.head1(inp2)
+            negative = self.head1(inp3)
         else:
             anchor = inp1
             positive = inp2
@@ -86,10 +84,13 @@ def pre_train_using_siamese(train_triplets, test_triplets, siamese_model, classe
     bs = train_triplets.batch_size
     siamese_model.train()
     for param in siamese_model.base.parameters():
-        param.requires_grad = False
-
-    for name, param in siamese_model.base.roberta.encoder.layer[11].named_parameters():
         param.requires_grad = True
+        
+    if siamese_model.head == False:
+        for name, param in siamese_model.base.roberta.encoder.layer[11].named_parameters():
+            param.requires_grad = True
+        for name, param in siamese_model.base.roberta.encoder.layer[10].named_parameters():
+            param.requires_grad = True
 
     print(f'trainable: {[name for name, param in siamese_model.named_parameters() if param.requires_grad]}')
     if early_stopping:
@@ -101,60 +102,62 @@ def pre_train_using_siamese(train_triplets, test_triplets, siamese_model, classe
         contrastive_loss = torch.nn.TripletMarginWithDistanceLoss(margin=1, swap=False, reduction='sum', distance_function=torch.nn.PairwiseDistance(p=1, eps=1e-06, keepdim=False))
     else:
         contrastive_loss = criterion
-    for epoch in range(epochs):
-        running_loss = 0.0
-        for i in tqdm(range(train_triplets.num_batches)):
-            [anchor, positive, negative], anchor_class = train_triplets.get_batch()
-            optimizer.zero_grad()
-            output1, output2, output3 = siamese_model(anchor, positive, negative)
-            loss = contrastive_loss(output1, output2, output3)
-            loss.backward()
-            optimizer.step()
-            running_loss += loss.item()
-            
-            if (i in [train_triplets.num_batches - 1] or i % print_every == 0) and i != 0:
-                with torch.no_grad():
-                    # turn off dropout, but only for this loop
-                    siamese_model.eval()
-                    valid_loss = 0.0
-                    for i in range(print_every):
-                        [anchor, positive, negative], anchor_class = test_triplets.get_batch()
-                        output1, output2, output3 = siamese_model(anchor, positive, negative)
-                        loss = contrastive_loss(output1, output2, output3)
-                        valid_loss += loss.item()
-                    history['test'].append(valid_loss / print_every * bs)
-                    siamese_model.train()
-                    
-                print(f"train loss: {running_loss / print_every}, val loss: {history['test'][-1]}, patience {patience_counter}/{patience}", end='\r', flush=True)
-                history['train'].append(running_loss / print_every)
-                running_loss = 0.0
+    with tqdm(total=epochs * train_triplets.num_batches) as pbar:
+        for epoch in range(epochs):
+            running_loss = 0.0
+            for i in range(train_triplets.num_batches):
+                [anchor, positive, negative], anchor_class = train_triplets.get_batch()
+                optimizer.zero_grad()
+                output1, output2, output3 = siamese_model(anchor, positive, negative)
+                loss = contrastive_loss(output1, output2, output3)
+                loss.backward()
+                optimizer.step()
+                running_loss += loss.item()
 
-                if not early_stopping:
-                    continue
+                if (i in [train_triplets.num_batches - 1] or i % print_every == 0) and i != 0:
+                    with torch.no_grad():
+                        # turn off dropout, but only for this loop
+                        siamese_model.eval()
+                        valid_loss = 0.0
+                        for i in range(print_every):
+                            [anchor, positive, negative], anchor_class = test_triplets.get_batch()
+                            output1, output2, output3 = siamese_model(anchor, positive, negative)
+                            loss = contrastive_loss(output1, output2, output3)
+                            valid_loss += loss.item()
+                        history['test'].append(valid_loss / print_every * bs)
+                        siamese_model.train()
+                        
+                    history['train'].append(running_loss / print_every)
+                    running_loss = 0.0
+                    pbar.desc = f"train loss: {history['train'][-1]}, val loss: {history['test'][-1]}, patience {patience - patience_counter}/{patience}"
+                    pbar.update(print_every)
 
-                if history['test'][-1] == 0.0:
-                    best_weights = copy.deepcopy(siamese_model.state_dict())
-                if history['test'][-1] < best_loss:
-                    best_loss = history['test'][-1]
-                    best_weights = copy.deepcopy(siamese_model.state_dict())
-                    patience_counter = 0
-                elif patience_counter > patience:
-                    print(f'Early stopping: restoring best weights with test loss {best_loss}')
-                    siamese_model.load_state_dict(best_weights)
-                    return siamese_model, history
-                elif history['test'][-1] > best_loss:
-                    patience_counter += 1
-                elif float(history['test'][-1]) == 0.0:
-                    patience_counter += 0.1
-                elif history['test'][-1] in [np.inf, np.nan]:
-                    print('Early stopping: NaN or inf loss')
-                    siamese_model.load_state_dict(best_weights)
-                    return siamese_model, history
+                    if not early_stopping:
+                        continue
 
-    if early_stopping:
-        print(f'Early stopping: restoring best weights with test loss {best_loss}')
-        siamese_model.load_state_dict(best_weights)
-    siamese_model.eval()  
+                    if history['test'][-1] == 0.0:
+                        best_weights = copy.deepcopy(siamese_model.state_dict())
+                    if history['test'][-1] < best_loss:
+                        best_loss = history['test'][-1]
+                        best_weights = copy.deepcopy(siamese_model.state_dict())
+                        patience_counter = 0
+                    elif patience_counter > patience:
+                        print(f'Early stopping: restoring best weights with test loss {best_loss}')
+                        siamese_model.load_state_dict(best_weights)
+                        return siamese_model, history
+                    elif history['test'][-1] > best_loss:
+                        patience_counter += 1
+                    elif float(history['test'][-1]) == 0.0:
+                        patience_counter += 0.1
+                    elif history['test'][-1] in [np.inf, np.nan]:
+                        print('Early stopping: NaN or inf loss')
+                        siamese_model.load_state_dict(best_weights)
+                        return siamese_model, history
+
+        if early_stopping:
+            print(f'Early stopping: restoring best weights with test loss {best_loss}')
+            siamese_model.load_state_dict(best_weights)
+        siamese_model.eval()  
     return siamese_model, history
 
 def test_siamese_model(model, test_triplets, print_every=100, history= {'test': []}, criterion=None):
@@ -245,8 +248,12 @@ def train_emotion_classifier(model, ds_train, ds_test, epochs=2, print_every=500
     assert len(ds_test) > 0, "ds_test must have at least one element"
     
     model.train()
-    for name, param in model.siamese_network.parameters():
+    for param in model.siamese_network.parameters():
             param.requires_grad = False
+    model.head.requires_grad = True
+    model.head.weight.requires_grad = True
+    model.head.bias.requires_grad = True
+    model.siamese_network.head1.requires_grad = True
     #for name, param in model.siamese_network.base.roberta.encoder.layer[11].named_parameters():
         #param.requires_grad = True
 
@@ -259,62 +266,61 @@ def train_emotion_classifier(model, ds_train, ds_test, epochs=2, print_every=500
     if early_stopping:
         best_loss = np.inf
 
-    # train classify_single_input. This uses binart cross entropy loss
-    for epoch in range(epochs):
-        running_loss = 0.0
-        valid_loss = 0.0
-        batch_num = 0 
-        for batch in tqdm(ds_train, total=len(ds_train) * epochs):
-            optimizer.zero_grad()
-            x, y = batch
-            y_pred = model(x)
-            loss = criterion(y_pred, y)
-            loss.backward()
-            optimizer.step()
-            running_loss += loss.item()
-            
-            if batch_num in [train_batches - 1, 0] or batch_num % print_every == 0:
-                with torch.no_grad():
-                    model.eval()
-                    valid_loss = 0.0
-                    # validation set random batch of size print_every, 
-                    for _ in range(print_every//2):
-                        x, y = next(iter(ds_test))
-                        y_pred = model(x)
-                        loss = criterion(y_pred, y)
-                        valid_loss += loss.item()
-                    history['test'].append(valid_loss / (print_every//2))
-                    model.train()
-                    
-                print(f"Complete {epoch * train_batches + batch_num + 1} / {epochs * train_batches}. Epoch {epoch + 1} / {epochs}.", batch_num + 1, running_loss / print_every, "val loss:" , history['test'][-1], f'patience: {patience_}/{patience}', end='\r')
-                history['train'].append(running_loss / print_every)
-                running_loss = 0.0
+    with tqdm(total=epochs * len(ds_train)) as pbar:
+        for epoch in range(epochs):
+            running_loss = 0.0
+            valid_loss = 0.0
+            batch_num = 0 
+            for batch in ds_train:
+                optimizer.zero_grad()
+                x, y = batch
+                y_pred = model(x)
+                loss = criterion(y_pred, y)
+                loss.backward()
+                optimizer.step()
+                running_loss += loss.item()
                 
-            batch_num += 1
+                if batch_num in [train_batches - 1, 0] or batch_num % print_every == 0:
+                    with torch.no_grad():
+                        model.eval()
+                        valid_loss = 0.0
+                        # validation set random batch of size print_every, 
+                        for _ in range(print_every//2):
+                            x, y = next(iter(ds_test))
+                            y_pred = model(x)
+                            loss = criterion(y_pred, y)
+                            valid_loss += loss.item()
+                        history['test'].append(valid_loss / (print_every//2))
+                        model.train()
+                    history['train'].append(running_loss / print_every)
+                    running_loss = 0.0
+                batch_num += 1
+                pbar.desc = f"train loss: {history['train'][-1]}, val loss: {history['test'][-1]}, patience {patience_}/{patience}"
+                pbar.update(1)
 
-            
-            if not early_stopping:
-                continue
+                
+                if not early_stopping:
+                    continue
 
-            if batch_num % print_every == 0:
-                if history['test'][-1] < best_loss:
-                        best_loss = history['test'][-1]
-                        best_weights = copy.deepcopy(model.state_dict())
-                        patience_ = patience
-                elif patience_ == 0:
-                    print("Early stopping, restoring best weights")
-                    model.load_state_dict(best_weights)
-                    return model, history
-                elif history['test'][-1] > best_loss or np.isnan(history['test'][-1]) or np.isinf(history['test'][-1]):
-                    patience_ -= 1
-                elif float(history['test'][-1]) == 0.0:
-                    patience_ -= 0.1
-    
-    if early_stopping and history['test'][-1] < best_loss:
-        model.load_state_dict(best_weights)
-        print(f"restoring weight from batch {np.argmin(history['test']) * print_every} with loss {best_loss}")
-    model.eval()
-    return model, history
+                if batch_num % print_every == 0:
+                    if history['test'][-1] < best_loss:
+                            best_loss = history['test'][-1]
+                            best_weights = copy.deepcopy(model.state_dict())
+                            patience_ = patience
+                    elif patience_ == 0:
+                        print("Early stopping, restoring best weights")
+                        model.load_state_dict(best_weights)
+                        return model, history
+                    elif history['test'][-1] > best_loss or np.isnan(history['test'][-1]) or np.isinf(history['test'][-1]):
+                        patience_ -= 1
+                    elif float(history['test'][-1]) == 0.0:
+                        patience_ -= 0.1
+        
+        if early_stopping and history['test'][-1] < best_loss:
+            model.load_state_dict(best_weights)
+            print(f"restoring weight from batch {np.argmin(history['test']) * print_every} with loss {best_loss}")
+        model.eval()
+        return model, history
 
 def prep_triplet_data(MODEL=f"cardiffnlp/twitter-xlm-roberta-base-sentiment", augment=True, aug_n = 400000):
     """Prepares the data for training the triplet network
@@ -367,7 +373,6 @@ def prep_tensor_ds(x_train, y_train, x_test, y_test, bs=32):
     ds_test = data.TensorDataset(x_test, y_test)
     ds_test = data.DataLoader(ds_test, batch_size=16, shuffle=True)
     return ds_train, ds_test
-
 class classify_single_input(nn.Module):
     """Inherits from the siamese network and adds a head for the classification of a single input. Inherits the vector size and number of classes directly from the siamese network.
     
