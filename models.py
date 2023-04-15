@@ -21,59 +21,19 @@ class siamese_network(nn.Module):
         classes {int} -- The number of classes to classify into
         vector_size {int} -- The size of the vector to output from the siamese network. This is the size of the vector that will be used to train the emotion classifier.
         model {str} -- The pretrained model to use. Defaults to "cardiffnlp/twitter-xlm-roberta-base-sentiment"."""
-    def __init__(self, classes, vector_size=120, MODEL=f"cardiffnlp/twitter-xlm-roberta-base-sentiment", head=False):
+    def __init__(self, classes, vector_size=120, MODEL=f"cardiffnlp/twitter-xlm-roberta-base-sentiment"):
         super().__init__()
         self.MODEL = MODEL
-        self.head = head
-        self.config = AutoConfig.from_pretrained(MODEL, num_labels=classes, is_decoder = False, fine_tuning_task = 'text-classification')
+        self.config = AutoConfig.from_pretrained(MODEL, num_labels=vector_size, fine_tuning_task = 'text-classification')
         self.classes = classes
         self.vector_size = vector_size
-        self.base = AutoModelForSequenceClassification.from_pretrained(self.MODEL, ignore_mismatched_sizes=True, is_decoder = False) #num_labels=self.classes, 
-        # delete the head of the model so that we can add our own
-        del self.base.classifier
+        self.siamese_shared_weights = AutoModelForSequenceClassification.from_pretrained(self.MODEL, ignore_mismatched_sizes=True, config=self.config)
 
-        # add a shared layer for the siamese network
-        self.siamese_shared_weights = self.base.roberta
-        self.head1 = nn.Linear(self.config.hidden_size, vector_size)
-        
-    def forward(self, x1, x2, x3):
-        inp1 = self.siamese_shared_weights(x1)
-        inp2 = self.siamese_shared_weights(x2)
-        inp3 = self.siamese_shared_weights(x3)
-        inp1 = inp1[0][:, 0, :]
-        inp2 = inp2[0][:, 0, :]
-        inp3 = inp3[0][:, 0, :]
-        if self.head:
-            anchor = self.head1(inp1)
-            positive = self.head1(inp2)
-            negative = self.head1(inp3)
-        else:
-            anchor = inp1
-            positive = inp2
-            negative = inp3
-
-        anchor = torch.nn.functional.softmax(anchor, dim=1)
-        positive = torch.nn.functional.softmax(positive, dim=1)
-        negative = torch.nn.functional.softmax(negative, dim=1)
-        
-        return anchor, positive, negative
-
-def triplet_loss(anchor:torch.Tensor, positive:torch.Tensor, negative:torch.Tensor):
-    """Loss experiment using statistics confidence testing. We want anchor and positive examples to be from the same dist and negative and anchor to be from different dists. We want to maximize the AOC between anchor/positve and minimize between negatives/anchor.
-    
-    Arguments:
-        anchor {torch.Tensor} -- The anchor embedding
-        positive {torch.Tensor} -- The positive embedding
-        negative {torch.Tensor} -- The negative embedding
-    
-    Returns:
-        torch.Tensor -- The loss
-    """
-    pos_dist = torch.sum(torch.abs(anchor - positive), dim=1)
-    neg_dist = torch.sum(torch.abs(anchor - negative), dim=1)
-    diff = torch.mean(pos_dist - neg_dist)
-    diff = torch.functional.F.sigmoid(diff)
-    return diff
+    def forward(self, x1):
+        x1 = self.siamese_shared_weights.forward(x1)[0]
+        #positive = self.siamese_shared_weights(x2)
+        #negative = self.siamese_shared_weights(x3)
+        return x1 #anchor, positive, negative
 
 def pre_train_using_siamese(train_triplets, test_triplets, siamese_model, classes, epochs=4, print_every=500, history= {'train': [], 'test': []}, criterion=None, early_stopping=True, patience=100):
     """Pret-train the emotion classifier (the weights prior to the final layer) using a siamese network in order to ensure the classifier has an easier job.
@@ -96,12 +56,13 @@ def pre_train_using_siamese(train_triplets, test_triplets, siamese_model, classe
         """
     bs = train_triplets.batch_size
     siamese_model.train()
-    for param in siamese_model.base.parameters():
+    for param in siamese_model.parameters():
         param.requires_grad = False
-    
-    for i in [11]:
-        for _, param in siamese_model.base.roberta.encoder.layer[i].named_parameters():
-                param.requires_grad = True
+    for param in siamese_model.siamese_shared_weights.classifier.parameters():
+        param.requires_grad = True
+    for i in [10, 11]:
+        for name, param in siamese_model.siamese_shared_weights.roberta.encoder.layer[i].parameters():
+            param.requires_grad = True
 
     print(f'trainable: {[name for name, param in siamese_model.named_parameters() if param.requires_grad]}')
     if early_stopping:
@@ -110,7 +71,7 @@ def pre_train_using_siamese(train_triplets, test_triplets, siamese_model, classe
 
     optimizer=torch.optim.Adam(siamese_model.parameters(), lr=0.001)
     if criterion is None:
-        contrastive_loss = triplet_loss
+        contrastive_loss = torch.nn.TripletMarginLoss(margin=1.0, p=2)
     else:
         contrastive_loss = criterion
     with tqdm(total=epochs * train_triplets.num_batches) as pbar:
@@ -119,8 +80,11 @@ def pre_train_using_siamese(train_triplets, test_triplets, siamese_model, classe
             for i in range(train_triplets.num_batches):
                 [anchor, positive, negative], anchor_class = train_triplets.get_batch()
                 optimizer.zero_grad()
-                output1, output2, output3 = siamese_model(anchor, positive, negative)
-                loss = contrastive_loss(output1, output2, output3)
+                with torch.no_grad():
+                    negative_ = siamese_model(negative)
+                    positive_ = siamese_model(positive)
+                anchor_ = siamese_model(anchor)
+                loss = contrastive_loss(anchor_, positive_, negative_)
                 loss.backward()
                 optimizer.step()
                 running_loss += loss.item()
@@ -132,8 +96,10 @@ def pre_train_using_siamese(train_triplets, test_triplets, siamese_model, classe
                         valid_loss = 0.0
                         for i in range(print_every):
                             [anchor, positive, negative], anchor_class = test_triplets.get_batch()
-                            output1, output2, output3 = siamese_model(anchor, positive, negative)
-                            loss = contrastive_loss(output1, output2, output3)
+                            negative_ = siamese_model(negative)
+                            positive_ = siamese_model(positive)
+                            anchor_ = siamese_model(anchor)
+                            loss = contrastive_loss(anchor_, positive_, negative_)
                             valid_loss += loss.item()
                         history['test'].append(valid_loss / print_every)
                         siamese_model.train()
@@ -186,7 +152,7 @@ def test_siamese_model(model, test_triplets, print_every=100, history= {'test': 
         history -- The loss history dictionary
         """
     if criterion == None:
-        contrastive_loss = torch.nn.TripletMarginWithDistanceLoss(margin=model.vector_size,reduction='mean', distance_function=nn.PairwiseDistance(p=2.0, eps=1e-06, keepdim=False))
+        contrastive_loss = torch.nn.TripletMarginWithdiffanceLoss(margin=model.vector_size,reduction='mean', diffance_function=nn.Pairwisediffance(p=2.0, eps=1e-06, keepdim=False))
     else:
         contrastive_loss = criterion
 
@@ -260,13 +226,8 @@ def train_emotion_classifier(model, ds_train, ds_test, epochs=2, print_every=500
     
     model.train()
     for param in model.siamese_network.parameters():
-            param.requires_grad = False
-    model.head.requires_grad = True
-    model.head.weight.requires_grad = True
-    model.head.bias.requires_grad = True
-    model.siamese_network.head1.requires_grad = True
-    #for name, param in model.siamese_network.base.roberta.encoder.layer[11].named_parameters():
-        #param.requires_grad = True
+        param.requires_grad = False
+    model.siamese_network.siamese_shared_weights.classifier.requires_grad = True
 
     print(f'trainable: {[name for name, param in model.named_parameters() if param.requires_grad]}')
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
@@ -398,11 +359,6 @@ class classify_single_input(nn.Module):
         self.head = nn.LazyLinear(self.siamese_network.classes)
 
     def forward(self, x):
-        inp = self.siamese_network.siamese_shared_weights(x)
-        out = inp[0][:, 0, :]
-        if self.siamese_network.head:
-            out = self.siamese_network.head1(out)
-        out = torch.nn.functional.softmax(out, dim=1)
-        out = self.head(out)
-        out = torch.nn.functional.softmax(out, dim=1)
+        inp = self.siamese_network.forward(x)
+        out = torch.nn.functional.softmax(self.head(inp), dim=1)
         return out
