@@ -126,34 +126,42 @@ def load_file(file:str):
     if file_type == 'parquet':
         df = pd.read_parquet(file)
         df.columns = [x.lower() for x in df.columns]
+        if 'date' in df.columns: df['date'] = df['date'].apply(lambda x: arrow.get(x).format('YYYY-MM-DD'))
         return df
     elif file_type == 'csv':
         df =  pd.read_csv(file, low_memory=False, parse_dates=True, infer_datetime_format=True, on_bad_lines='skip', encoding_errors= 'replace')
         df.columns = [x.lower() for x in df.columns]
+        if 'date' in df.columns: df['date'] = df['date'].apply(lambda x: arrow.get(x).format('YYYY-MM-DD'))
         return df
     elif file_type == 'xlsx':
         df =  pd.read_excel(file, parse_dates=True)
         df.columns = [x.lower() for x in df.columns]
+        if 'date' in df.columns: df['date'] = df['date'].apply(lambda x: arrow.get(x).format('YYYY-MM-DD'))
         return df
     elif file_type == 'pkl':
         df =  load(file)
         df.columns = [x.lower() for x in df.columns]
+        if 'date' in df.columns: df['date'] = df['date'].apply(lambda x: arrow.get(x).format('YYYY-MM-DD'))
         return df
     elif file_type in ['.lz4', 'lz4']:
         df =  load(file, compression='lz4')
         df.columns = [x.lower() for x in df.columns]
+        if 'date' in df.columns: df['date'] = df['date'].apply(lambda x: arrow.get(x).format('YYYY-MM-DD'))
         return df
     elif file_type == 'json':
         df =  pd.read_json(file)
         df.columns = [x.lower() for x in df.columns]
+        if 'date' in df.columns: df['date'] = df['date'].apply(lambda x: arrow.get(x).format('YYYY-MM-DD'))
         return df
     elif file_type == 'txt':
         df =  pd.read_csv(file, sep='\t', parse_dates=True, infer_datetime_format=True, on_bad_lines='skip', encoding_errors= 'replace')
         df.columns = [x.lower() for x in df.columns]
+        if 'date' in df.columns: df['date'] = df['date'].apply(lambda x: arrow.get(x).format('YYYY-MM-DD'))
         return df
     elif file_type == 'dat':
         df =  pd.read_csv(file, sep='\t', low_memory=False, parse_dates=True, infer_datetime_format=True, on_bad_lines='skip', encoding_errors= 'replace')
         df.columns = [x.lower() for x in df.columns]
+        if 'date' in df.columns: df['date'] = df['date'].apply(lambda x: arrow.get(x).format('YYYY-MM-DD'))
         return df
     else:
         try:
