@@ -433,23 +433,30 @@ def df_to_datetime(df: pd.DataFrame, offset_days: int = 0):
                 if 'date' in col.lower():
                     col = collumn
                     break
-        df[col] = df[col].apply(lambda x: x.split(' ')[0])
-        offset_days = pd.Timedelta(f'{offset_days} days') #pd.Timedelta(days=offset_days)
-        time = pd.to_datetime(df[col], format=r"%Y-%m-%d")
-        time = time.apply(lambda x: x + offset_days)
-        # convert to days
-        df.index = time
+        # df[col] = df[col].apply(lambda x: x.split(' ')[0])
+        # offset_days = pd.Timedelta(f'{offset_days} days') #pd.Timedelta(days=offset_days)
+        # time = pd.to_datetime(df[col], format=r"%Y-%m-%d")
+        # time = time.apply(lambda x: x + offset_days)
+        # # convert to days
+        # df.index = time
 
-        print(time)
-        df.drop(columns=[col], inplace=True)
+        # print(time)
+        # df.drop(columns=[col], inplace=True)
+        df[col] = df[col].apply(lambda x: arrow.get(x))
+        if offset_days != 0: df[col] = df[col].apply(lambda x: x.shift(days=offset_days))
+        df[col] = df[col].apply(lambda x: x.format('YYYY-MM-DD'))
+        df[col] = pd.to_datetime(df[col], format=r"%Y-%m-%d")
+        df.index = df[col]
     return df
 
-def interpolate_months_to_days(df: pd.DataFrame, extend_trend_to_today: bool = False):
+def interpolate_months_to_days(df: pd.DataFrame, extend_trend_to_today: bool = False, offset_days: int = 0):
     """Interpolates the dataframe to account for missing days. E.g, Macro data is usually available on a monthly basis.
     
     Args: DataFrame, extend_trend_to_today (bool): If True, the index will be extended to today (only enabled for monthly data).)"""
     #check if index is already datetime
     df = df_to_datetime(df)
+
+    df = df_to_datetime(df, offset_days=offset_days)
 
     #check if the indexonthly
     if abs(df.index[-2:-1] - df.index[-1:]) > abs(14* pd.Timedelta('1 day')):
@@ -478,7 +485,7 @@ def interpolate_months_to_days(df: pd.DataFrame, extend_trend_to_today: bool = F
     
     return df
 
-def intersect_df(df1: pd.DataFrame, df2: pd.DataFrame, interpolate_to_days: bool = False, extend_trend_to_today: bool = False, offset_2nd_df_by_days: int = 1):
+def intersect_df(df1: pd.DataFrame, df2: pd.DataFrame, interpolate_to_days: bool = False, extend_trend_to_today: bool = False):
     """Performantly Intersects two dataframes based on their (datetime) index.
     
     Args: 
@@ -489,8 +496,6 @@ def intersect_df(df1: pd.DataFrame, df2: pd.DataFrame, interpolate_to_days: bool
     
     Returns: The datapoints shared between the two datasets."""
 
-    if offset_2nd_df_by_days != 0:
-        df2 = df_to_datetime(df2, offset_days=offset_2nd_df_by_days)
 
 
     if interpolate_to_days:
