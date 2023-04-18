@@ -1,7 +1,5 @@
-from sklearn.model_selection import train_test_split
 import numpy as np
-from transformers import AutoModelForSequenceClassification, AutoTokenizer, AutoConfig, pipeline
-from sklearn.model_selection import train_test_split
+from transformers import AutoModelForSequenceClassification, AutoTokenizer, AutoConfig
 from transformers import AutoModelForSequenceClassification, AutoConfig
 import torch
 import torch.nn as nn
@@ -10,9 +8,12 @@ cuda = torch.device("cuda")
 cpu = torch.device("cpu")
 from tqdm.notebook import tqdm
 from utils import get_emotion_df, create_triplets
-import random
 import copy
 import contextlib
+import pandas as pd
+import os
+import matplotlib.pyplot as plt
+from utils import get_sentence_vectors, save_file, load_file
 
 class siamese_network(nn.Module):
     """Instantiate the xlm-roberta-base-sentiment model and add a siamese network head to it to replace the sentiment classifier head with emotion classifier head. Allowes for the model to later be altered to train on non-triplet data after pre-training on triplet data.
@@ -31,9 +32,39 @@ class siamese_network(nn.Module):
 
     def forward(self, x1):
         x1 = self.siamese_shared_weights.forward(x1)[0]
-        #positive = self.siamese_shared_weights(x2)
-        #negative = self.siamese_shared_weights(x3)
-        return x1 #anchor, positive, negative
+        return x1
+
+def loss_fn(anchor, positive, negative, margin=1, conv_func1 = nn.Conv1d(1, 1, 5, 3, padding=1, device=cuda), conv_func2 = nn.Conv1d(1, 1, 9, 6, padding=1, device=cuda)):
+    """The triplet loss function. 
+    
+    Arguments:
+        anchor {torch.Tensor} -- The anchor vector
+        positive {torch.Tensor} -- The positive vector
+        negative {torch.Tensor} -- The negative vector
+        margin {float} -- The margin to use for the loss function
+    
+    Returns:
+        torch.Tensor -- The loss"""
+    diff_positive_anchor = (anchor - positive)
+    diff_negative_anchor = (anchor - negative)
+    seperatedness_loss = torch.sum(torch.clamp(torch.sum(torch.abs(diff_positive_anchor), dim=1) - torch.sum(torch.abs(diff_negative_anchor), dim=1) + margin, min=0.0))
+
+    # apply a conv1d to dim1 to reduce the dimensionality/add blur
+    anchor_density   = conv_func1(anchor.unsqueeze(1)).squeeze(1)
+    positive_density = conv_func1(positive.unsqueeze(1)).squeeze(1)
+    negative_density = conv_func1(negative.unsqueeze(1)).squeeze(1)
+    diff_positive_anchor = (anchor_density - positive_density) # minimize
+    diff_negative_anchor = (anchor_density - negative_density) # maximize
+    seperatedness_loss += torch.sum(torch.clamp(torch.sum(torch.abs(diff_positive_anchor), dim=1) - torch.sum(torch.abs(diff_negative_anchor), dim=1) + margin, min=0.0))
+
+    anchor_density   = conv_func2(anchor.unsqueeze(1)).squeeze(1)
+    positive_density = conv_func2(positive.unsqueeze(1)).squeeze(1)
+    negative_density = conv_func2(negative.unsqueeze(1)).squeeze(1)
+    diff_positive_anchor = (anchor_density - positive_density) # minimize
+    diff_negative_anchor = (anchor_density - negative_density) # maximize
+    seperatedness_loss += torch.sum(torch.clamp(torch.sum(torch.abs(diff_positive_anchor), dim=1) - torch.sum(torch.abs(diff_negative_anchor), dim=1) + margin, min=0.0))
+
+    return seperatedness_loss
 
 def pre_train_using_siamese(train_triplets, test_triplets, siamese_model, classes, epochs=4, print_every=500, history= {'train': [], 'test': []}, criterion=None, early_stopping=True, patience=100):
     """Pret-train the emotion classifier (the weights prior to the final layer) using a siamese network in order to ensure the classifier has an easier job.
@@ -54,14 +85,14 @@ def pre_train_using_siamese(train_triplets, test_triplets, siamese_model, classe
         nn.Module -- The siamese network model
         history -- The loss history dictionary
         """
-    bs = train_triplets.batch_size
     siamese_model.train()
+
     for param in siamese_model.parameters():
         param.requires_grad = False
     for param in siamese_model.siamese_shared_weights.classifier.parameters():
         param.requires_grad = True
-    for i in [10, 11]:
-        for name, param in siamese_model.siamese_shared_weights.roberta.encoder.layer[i].parameters():
+    for i in [11]:
+        for param in siamese_model.siamese_shared_weights.roberta.encoder.layer[i].parameters():
             param.requires_grad = True
 
     print(f'trainable: {[name for name, param in siamese_model.named_parameters() if param.requires_grad]}')
@@ -71,7 +102,7 @@ def pre_train_using_siamese(train_triplets, test_triplets, siamese_model, classe
 
     optimizer=torch.optim.Adam(siamese_model.parameters(), lr=0.001)
     if criterion is None:
-        contrastive_loss = torch.nn.TripletMarginLoss(margin=1.0, p=2)
+        contrastive_loss = loss_fn
     else:
         contrastive_loss = criterion
     with tqdm(total=epochs * train_triplets.num_batches) as pbar:
@@ -80,9 +111,9 @@ def pre_train_using_siamese(train_triplets, test_triplets, siamese_model, classe
             for i in range(train_triplets.num_batches):
                 [anchor, positive, negative], anchor_class = train_triplets.get_batch()
                 optimizer.zero_grad()
-                with torch.no_grad():
-                    negative_ = siamese_model(negative)
-                    positive_ = siamese_model(positive)
+                #with torch.no_grad():
+                negative_ = siamese_model(negative)
+                positive_ = siamese_model(positive)
                 anchor_ = siamese_model(anchor)
                 loss = contrastive_loss(anchor_, positive_, negative_)
                 loss.backward()
@@ -112,7 +143,7 @@ def pre_train_using_siamese(train_triplets, test_triplets, siamese_model, classe
                     if not early_stopping:
                         continue
 
-                    if history['test'][-1] == 0.0:
+                    if history['test'][-1] == best_loss:
                         best_weights = copy.deepcopy(siamese_model.state_dict())
                     if history['test'][-1] < best_loss:
                         best_loss = history['test'][-1]
@@ -202,6 +233,53 @@ def test_emotion_classifier(model, ds_test, print_every=100, history= {'test': [
     print(f"Test loss: {np.mean(history['test'])}")
     return history
 
+def classify_text(model, text_or_fd, MODELNAME=f"cardiffnlp/twitter-xlm-roberta-base-sentiment", bs=64, device='cuda'):
+    """Classify text using the emotion classifier model
+    
+    Arguments:
+        model {nn.Module} -- The emotion classifier model
+        text {str} -- The text to classify
+        MODELNAME {str} -- The name of the model to use for tokenization
+        bs {int} -- The batch size
+        device {str} -- The device to use for inference
+    
+    Returns:
+        list -- The emotion predictions
+        """
+    model.eval
+    model.to(device)
+    assert isinstance(text_or_fd, (list, pd.DataFrame,pd.Series)), "text_or_fd must be a string, pandas DataFrame or pandas Series"
+
+    # tokenize the text
+    if isinstance(text_or_fd, str):
+        text = [text_or_fd]
+    elif isinstance(text_or_fd, pd.DataFrame):
+        text = text_or_fd['text'].tolist()
+    elif isinstance(text_or_fd, pd.Series):
+        text = text_or_fd.tolist()
+    else:
+        text = text_or_fd
+    sentence_vectors = get_sentence_vectors(text, MODELNAME)
+
+    # create batches from list of sentence vectors
+    batches = [sentence_vectors[i:i + bs] for i in range(0, len(sentence_vectors), bs)]
+
+    # get predictions
+    predictions = []
+    for batch in tqdm(batches):
+        batch = torch.stack([torch.tensor(x) for x in batch]).to(device)
+        output = model(batch)
+        predictions.extend(output.tolist())
+
+    if isinstance(text_or_fd, pd.DataFrame):
+        predictions = {}
+        return text_or_fd
+    elif isinstance(text_or_fd, pd.Series):
+        return pd.Series(predictions, index=text_or_fd.index)
+    else:
+        return predictions
+    
+
 def train_emotion_classifier(model, ds_train, ds_test, epochs=2, print_every=500, history= {'train': [], 'test': []}, early_stopping=True, patience=100, criterion=torch.nn.CrossEntropyLoss()):
     """Train the emotion classifier using the siamese network weights as a starting point. This only updates the final layer of the model.
     
@@ -228,6 +306,12 @@ def train_emotion_classifier(model, ds_train, ds_test, epochs=2, print_every=500
     for param in model.siamese_network.parameters():
         param.requires_grad = False
     model.siamese_network.siamese_shared_weights.classifier.requires_grad = True
+
+    for param in model.siamese_network.siamese_shared_weights.classifier.parameters():
+        param.requires_grad = True
+    for i in [11]:
+        for param in model.siamese_network.siamese_shared_weights.roberta.encoder.layer[i].parameters():
+            param.requires_grad = True
 
     print(f'trainable: {[name for name, param in model.named_parameters() if param.requires_grad]}')
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
@@ -362,3 +446,85 @@ class classify_single_input(nn.Module):
         inp = self.siamese_network.forward(x)
         out = torch.nn.functional.softmax(self.head(inp), dim=1)
         return out
+
+def emotion_classifier_load(MODEL='cardiffnlp/twitter-xlm-roberta-base-sentiment', vector_size=120, max_epocks=10, early_stopping=True, patience=500, print_every=500, device='cuda') -> nn.Module:
+    """Loads the emotion classifier model and trains it if it does not exist
+    
+    Keyword Arguments:
+        MODEL {str} -- The model to use (default: {'cardiffnlp/twitter-xlm-roberta-base-sentiment'})
+        vector_size {int} -- The vector size of the siamese network (default: {120})
+        classes_len {int} -- The number of classes (default: {classes_len})
+        max_epocks {int} -- The maximum number of epocks to train for (default: {10})
+        classes {list} -- The list of classes (default: {classes})
+        early_stopping {bool} -- Whether to use early stopping (default: {True})
+        patience {int} -- The patience for early stopping (default: {500})
+        print_every {int} -- How often to print the loss (default: {500})
+        device {str} -- The device to use (default: {'cuda'})
+        
+        Returns:
+            nn.Module -- The emotion classifier model
+        """
+    
+    if not os.path.exists('models/emotion_classifier.pt') or not os.path.exists('models/siamese_model.pt'):
+        classes, train_triplets, test_triplets, x_train, y_train, x_test, y_test = prep_triplet_data(MODEL=MODEL, augment=True, aug_n = 400000)
+        ds_train, ds_test = prep_tensor_ds( x_train, y_train, x_test, y_test)
+        classes_len = len(classes)
+    else:
+        classes_len = 29
+
+    if not os.path.exists('models/siamese_model.pt'):
+        siamese_network_model = siamese_network(classes_len, vector_size=vector_size, MODEL=MODEL).to(device)
+        siamese_model, history = pre_train_using_siamese(train_triplets, test_triplets, siamese_network_model, epochs=max_epocks, classes=classes, early_stopping=early_stopping, patience=patience, print_every=print_every)
+        if not os.path.exists('models'):
+            os.makedirs('models')
+        torch.save(siamese_model.state_dict(), f'models/siamese_model.pt')
+
+        # plot the train and test loss over time on the same plot
+        fig = plt.figure(figsize=(10, 5))
+        plt.plot(history['train'], label='pretraining train loss')
+        plt.plot(history['test'], label='pretraining test loss')
+        plt.legend()
+        plt.show()
+
+        # save plot of train and test loss over time along with history
+        if not os.path.exists('results'):
+            os.makedirs('results')
+        fig.savefig('results/pretrain_emotion_history.jpg')
+        save_file(history, 'results/pretrain_emotion_history.parquet')
+        plt.close(fig)
+    else:
+        siamese_network_model = siamese_network(classes_len).to(device)
+        siamese_network_model.load_state_dict(torch.load(f'models/siamese_model.pt'))
+
+    """In this step, we finally train the last two weight layers to convert the siamese network into a classifier. Later, we can consider unfreezing a few of the earlier layers to improve performance with a lower learning rate."""
+
+    if not os.path.exists('models/emotion_classifier.pt'):
+        if not os.path.exists('models/siamese_model.pt'):
+            siamese_network_model = siamese_network(classes_len, vector_size=vector_size, MODEL=MODEL).to(device)
+        model = classify_single_input(siamese_network_model)
+        model = model.to(device)
+        model, history = train_emotion_classifier(model, ds_train, ds_test, epochs=max_epocks, early_stopping=early_stopping, patience=patience, print_every=print_every)
+
+        if not os.path.exists('models'):
+            os.makedirs('models')
+        torch.save(model.state_dict(), f'models/emotion_classifier.pt')
+
+        # plot the train and test loss over time on the same plot
+        fig = plt.figure(figsize=(10, 5))
+        plt.plot(history['train'], label='train loss')
+        plt.plot(history['test'], label='test loss')
+        plt.legend()
+        plt.show()
+
+        # save plot of train and test loss over time along with history
+        if not os.path.exists('results'):
+            os.makedirs('results')
+        fig.savefig('results/emotion_history.jpg')
+        save_file(history, 'results/emotion_history.parquet')
+        plt.close(fig)
+    else:
+        model = classify_single_input(siamese_network_model)
+        model = model.to(device)
+        model.load_state_dict(torch.load(f'models/emotion_classifier.pt'))
+
+    return model
