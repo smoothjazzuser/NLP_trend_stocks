@@ -279,7 +279,6 @@ def classify_text(model, text_or_fd, MODELNAME=f"cardiffnlp/twitter-xlm-roberta-
     else:
         return predictions
     
-
 def train_emotion_classifier(model, ds_train, ds_test, epochs=2, print_every=500, history= {'train': [], 'test': []}, early_stopping=True, patience=100, criterion=torch.nn.CrossEntropyLoss()):
     """Train the emotion classifier using the siamese network weights as a starting point. This only updates the final layer of the model.
     

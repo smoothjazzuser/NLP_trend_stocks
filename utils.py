@@ -36,6 +36,7 @@ import contextlib
 import io
 import zipfile
 from sklearn.model_selection import train_test_split
+import arrow
 #torch.use_deterministic_algorithms(True)
 #torch.backends.cudnn.deterministic = True
 torch.manual_seed(42)
@@ -104,6 +105,11 @@ def convert_project_files_to_parquet():
         for file in files_to_compress:
             if not os.path.exists(file.replace(f'.{file_type}', '.parquet')):
                 df = load_file(file)
+                df.columns = [x.lower() for x in df.columns]
+                if 'dividends' in df.columns or 'stock splits' in df.columns:
+                    df = df.drop(columns=['dividends', 'stock splits'], inplace=False, errors='ignore')
+                if 'date' in df.columns:
+                    df['date'] = df['date'].apply(lambda x: arrow.get(x).format('YYYY-MM-DD'))
                 if type(df) != bool: df.to_parquet(file.replace(f'.{file_type}', '.parquet'), compression='brotli', engine='pyarrow')
             if os.path.exists(file):
                 os.remove(file)
@@ -118,27 +124,42 @@ def load_file(file:str):
         file path (str): The file to load."""
     file_type = file.split('.')[-1]
     if file_type == 'parquet':
-        return pd.read_parquet(file)
+        df = pd.read_parquet(file)
+        df.columns = [x.lower() for x in df.columns]
+        return df
     elif file_type == 'csv':
-        return pd.read_csv(file, low_memory=False, parse_dates=True, infer_datetime_format=True, on_bad_lines='skip', encoding_errors= 'replace')
+        df =  pd.read_csv(file, low_memory=False, parse_dates=True, infer_datetime_format=True, on_bad_lines='skip', encoding_errors= 'replace')
+        df.columns = [x.lower() for x in df.columns]
+        return df
     elif file_type == 'xlsx':
-        return pd.read_excel(file, parse_dates=True)
+        df =  pd.read_excel(file, parse_dates=True)
+        df.columns = [x.lower() for x in df.columns]
+        return df
     elif file_type == 'pkl':
-        return load(file)
+        df =  load(file)
+        df.columns = [x.lower() for x in df.columns]
+        return df
     elif file_type in ['.lz4', 'lz4']:
-        return load(file, compression='lz4')
+        df =  load(file, compression='lz4')
+        df.columns = [x.lower() for x in df.columns]
+        return df
     elif file_type == 'json':
-        return pd.read_json(file)
+        df =  pd.read_json(file)
+        df.columns = [x.lower() for x in df.columns]
+        return df
     elif file_type == 'txt':
-        return pd.read_csv(file, sep='\t', parse_dates=True, infer_datetime_format=True, on_bad_lines='skip', encoding_errors= 'replace')
+        df =  pd.read_csv(file, sep='\t', parse_dates=True, infer_datetime_format=True, on_bad_lines='skip', encoding_errors= 'replace')
+        df.columns = [x.lower() for x in df.columns]
+        return df
     elif file_type == 'dat':
-        return pd.read_csv(file, sep='\t', low_memory=False, parse_dates=True, infer_datetime_format=True, on_bad_lines='skip', encoding_errors= 'replace')
+        df =  pd.read_csv(file, sep='\t', low_memory=False, parse_dates=True, infer_datetime_format=True, on_bad_lines='skip', encoding_errors= 'replace')
+        df.columns = [x.lower() for x in df.columns]
+        return df
     else:
         try:
             return load(file)
         except:
-            os.remove(file)
-            return False
+            assert False, f'File type {file_type} not supported.'
 
 def save_file(df, file:str, force_type=None):
     """Saves a pandas dataframe to a file. Supports parquet, pkl, csv and xlsx files.
@@ -160,12 +181,16 @@ def save_file(df, file:str, force_type=None):
     if file_type == 'parquet':
         if force_type:
             df = df.astype(force_type)
+        df.columns = [x.lower() for x in df.columns]
         df.to_parquet(file, compression='brotli', engine='pyarrow')
     elif file_type == 'pkl':
+        df.columns = [x.lower() for x in df.columns]
         dump(df, file + '.lz4', compression='lz4')
     elif file_type == 'csv':
+        df.columns = [x.lower() for x in df.columns]
         df.to_csv(file, index=False)
     elif file_type == 'xlsx':
+        df.columns = [x.lower() for x in df.columns]
         df.to_excel(file, index=False)
 
 def fernet_key_encryption(password:str, name:str):
@@ -410,7 +435,7 @@ def df_to_datetime(df: pd.DataFrame, offset_days: int = 0):
                     break
         df[col] = df[col].apply(lambda x: x.split(' ')[0])
         offset_days = pd.Timedelta(f'{offset_days} days') #pd.Timedelta(days=offset_days)
-        time = pd.to_datetime(df[col], format='%Y-%m-%d')
+        time = pd.to_datetime(df[col], format=r"%Y-%m-%d")
         time = time.apply(lambda x: x + offset_days)
         # convert to days
         df.index = time
@@ -481,65 +506,6 @@ class get_macroeconomic_data ():
     def __init__(self, path):
         self.path = path
 
-    def read_parquet(self):
-        pass
-
-    def get_FRED(self):
-        pass
-
-    def get_BLS(self):
-        pass
-
-    def get_BIS(self):
-        pass
-
-    def get_GDP(self):
-        pass
-
-    def get_inflation(self):
-        pass
-
-    def get_interest_rates(self):
-        pass
-
-    def get_unemployment(self):
-        pass
-
-    def get_exchange_rates(self):
-        pass
-
-    def get_commodities(self):
-        pass
-
-    def parse_for_trade_wars(self):
-        pass
-
-    def get_trade_wars(self):
-        pass
-
-    def get_nat_disasters(self):
-        pass
-
-    def calculate_average_weather(self):
-        pass
-
-    def get_average_weather(self):
-        pass
-
-    def get_holidays(self):
-        pass
-
-    def get_federal_holidays(self):
-        pass
-
-    def calculate_indicators(self):
-        pass
-
-    def get_indicators(self):
-        pass
-
-    def get_pandemics(self):
-        pass
 class aquire_stock_search_terms():
     """
     Gather the company info for all the ticker symbols and return a dataframe with relevant search terms for each company.
@@ -560,11 +526,11 @@ class aquire_stock_search_terms():
 
     def load_symbols(self):
         """Load all the stock symbols."""
-        self.stocks_symbols = load_file("data/Stock_List.parquet")['Symbol'].tolist()
+        self.stocks_symbols = load_file("data/Stock_List.parquet")['symbol'].tolist()
         return self.stocks_symbols
 
     def ticker_list_to_dataframe(self):
-        self.data = pd.DataFrame(self.stocks_symbols, columns = ['Ticker'])
+        self.data = pd.DataFrame(self.stocks_symbols, columns = ['ticker'])
 
     def get_quote_type(self, index):
         """Return the quote type for a given ticker."""
@@ -722,10 +688,11 @@ class aquire_stock_search_terms():
         return ""
 
     def process_information(self):
-        self.data['Company'] = [self.get_company(t) for t in range(len(self.yh_tickers))]
-        self.data["Top_Executive"] = [self.get_company_officers(t) for t in range(len(self.yh_tickers))] 
-        self.data['Industry'] = [self.get_industry(t) for t in range(len(self.yh_tickers))]
-        self.data['quoteType'] = [self.get_quote_type(t) for t in range(len(self.yh_tickers))]
+        self.data.columns = [x.lower() for x in self.data.columns]
+        self.data['company'] = [self.get_company(t) for t in range(len(self.yh_tickers))]
+        self.data["top_executive"] = [self.get_company_officers(t) for t in range(len(self.yh_tickers))] 
+        self.data['industry'] = [self.get_industry(t) for t in range(len(self.yh_tickers))]
+        self.data['quotetype'] = [self.get_quote_type(t) for t in range(len(self.yh_tickers))]
         self.data['sector'] = [self.get_sector(t) for t in range(len(self.yh_tickers))]
         self.data['first_traded'] = [self.get_year_first_traded(t) for t in range(len(self.yh_tickers))]
         self.data['year_founded'] = [self.get_year_founded(t) for t in range(len(self.yh_tickers))]
@@ -1033,14 +1000,86 @@ def get_sentence_vectors(sentences, MODEL):
         MODEL (str): The model to use (finAlbert).
         """
     tokenizer = AutoTokenizer.from_pretrained(MODEL, use_fast=True)
-    """Returns the sentence vectors for the given sentences.
-    
-    Args:
-        sentences (list): A list of sentences.
-        
-    Returns:
-        torch.Tensor: A tensor of shape (len(sentences), 768) containing the sentence vectors."""
     return [tokenizer.encode(preprocess(sentence), add_special_tokens=True, max_length=128, truncation=True, padding="max_length") for sentence in sentences]
+
+def stock_missing_days(ticker, start_date=None, remove_days_in_between_datapoints=True, exchange='NYSE', year_format='YYYY-MM-DD'):
+    """ Returns a list of missing days for a given stock ticker. If start_date is None, it will use the earliest date in the dataset.
+
+    Args:
+        ticker: str
+        start_date: str in YYYY-MM-DD format
+
+    Returns:
+        missing_yyyymmdd: list of str
+    """
+    #nyse = mcal.get_calendar(exchange)
+    stock = load_file(f'data\Stock\{ticker}.parquet')
+    if start_date == None: start_date = arrow.get(stock.date.min()).format(year_format)
+    todays_date = arrow.now().format(year_format)
+    if remove_days_in_between_datapoints: start_date = arrow.get(stock.date.max()).format(year_format)
+
+    all_yyyymmdd = [x.format(year_format) for x in arrow.Arrow.range('day', arrow.get(start_date), arrow.get(todays_date))]
+    #off = [arrow.get(x).format(year_format) for x in mcal.date_range(nyse.schedule(start_date=start_date, end_date=todays_date), frequency='1D')]
+    all_yyyymmdd = [x for x in all_yyyymmdd if arrow.get(x).weekday() < 5]
+    not_missing_yyyymmdd = [arrow.get(x).format(year_format) for x in stock.date.tolist()]
+    missing_yyyymmdd = [x for x in all_yyyymmdd if x not in not_missing_yyyymmdd]
+    missing_yyyymmdd = [arrow.get(x).format('YYYY-MM-DD') for x in missing_yyyymmdd]
+    
+    return missing_yyyymmdd
+
+def update_stock_data(ticker=None, missing_yyyymmdd=None, exchange='NYSE', save=True):
+    """ Updates the stock data for a given ticker with the missing days in the dataset.
+
+    Args:
+        ticker: str, list of str, or None (if None, will update all stocks in data\Stock)
+        missing_yyyymmdd: list of str
+        exchange: str (default='NYSE', not used yet)
+        save: bool
+
+    Returns:
+        stock: pd.DataFrame
+    """
+    if ticker == None: 
+        tickers = [x.split('.')[0] for x in os.listdir('data\Stock') if x.endswith('.parquet')]
+    elif type(ticker) == str:
+        tickers = [ticker]
+
+    with tqdm(total=len(tickers)) as pbar:
+        for ticker in tickers:
+            if missing_yyyymmdd == None: 
+                missing_yyyymmdd = stock_missing_days(ticker, exchange=exchange)
+            stock = load_file(f'data\Stock\{ticker}.parquet').drop(columns=['adjclose', 'symbol', 'dividends', 'stock splits'], inplace=False, errors='ignore')
+                
+            if len(missing_yyyymmdd) <= 1: 
+                pbar.desc = f'{ticker} is up to date.'
+                pbar.update(1)
+                continue
+            else:
+                pbar.desc = f'Updating {ticker}... missing {len(missing_yyyymmdd)} days. {missing_yyyymmdd}'
+                pbar.update(1)
+
+            t = Ticker(ticker)
+            stock_data = t.history(period='max', interval='1d', start=missing_yyyymmdd[0], end=missing_yyyymmdd[-1])
+            stock_data = stock_data.reset_index(drop=False, inplace=False).drop(columns=['adjclose', 'symbol', 'dividends'], inplace=False, errors='ignore')
+            
+            
+            stock = pd.concat([stock, stock_data], axis=0).drop_duplicates(inplace=False).reset_index(drop=True, inplace=False)
+            #stock.date = stock.date.apply(lambda x: arrow.get(x).format('YYYY-MM-DD'))
+
+            if save:
+                try:
+                    os.rename(f'data\Stock\{ticker}.parquet', f'data\Stock\{ticker}_old.parquet')
+                    save_file(stock, f'data\Stock\{ticker}.parquet')
+                    os.remove(f'data\Stock\{ticker}_old.parquet')
+                except Exception as e:
+                    os.rename(f'data\Stock\{ticker}_old.parquet', f'data\Stock\{ticker}.parquet')
+                    print(f'Failed to update {ticker}')
+                    import traceback
+                    traceback.print_exc()
+
+                    raise e
+            else:
+                return stock
 
 def download_file(url, filename, move_to=None):
     """Downloads a file from a url and saves it to the specified filename. Not used in the current version but useful on windows, where this sometimes is needed as an alternative to wget.
