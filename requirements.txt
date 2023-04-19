@@ -20,3 +20,4 @@ tor_python_easy
 nlpaug
 nltk
 flair
+snscrape
