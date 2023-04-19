@@ -1114,7 +1114,7 @@ def download_file(url, filename, move_to=None):
         if not os.path.exists(move_to + filename) and not os.path.exists(move_to + filename.replace(filename.split('.')[-1], 'parquet')):
             shutil.move(filename, move_to)
 
-def scrape_tweets(since='2019-11-01', until='2020-03-30', max_tweets=20):
+def scrape_tweets(since='2019-11-01', until='2020-03-30', max_tweets=20, update_twitter_data=False):
     """
         Scrape tweets between since and until dates containing specified search terms. Returns max_tweets number of tweets for each search term.
         ***Currently only searches based on company "shortName" from "company_list.pkl". This can be updated in the future by passing a list of
@@ -1146,7 +1146,7 @@ def scrape_tweets(since='2019-11-01', until='2020-03-30', max_tweets=20):
     for name in clean_list:
 
         # scrape twitter data based on search terms and dates, return up to max_tweets for each search
-        for i,tweet in enumerate(sntw.TwitterSearchScraper(name['shortName'] + ' since:' + since + 'until:' + until).get_items()):
+        for i,tweet in enumerate(sntw.TwitterSearchScraper(name['shortName'] + ' since:' + since + ' until:' + until).get_items()):
             if i > max_tweets:
                 break
             tweets_list.append([tweet.date, tweet.rawContent, tweet.user.username, name['shortName']])
@@ -1155,5 +1155,16 @@ def scrape_tweets(since='2019-11-01', until='2020-03-30', max_tweets=20):
             print(f"Scraping progress: Company list index: {counter} out of {len(clean_list)}")
         counter += 1
 
-    tweets_df = pd.DataFrame(tweets_list, columns=['Datetime', 'Text', 'Username', 'Company'])
-    tweets_df.to_parquet(engine='pyarrow', compression='brotli')
+        # convert scraped tweets to dataframe
+        tweets_df = pd.DataFrame(tweets_list, columns=['Datetime', 'Text', 'Username', 'SearchTerm'])
+
+        # if updating existing twitter data append to existing file (if it exists), else save as new file
+        if os.path.exists('./data/twitter_data.parquet'):
+            if update_twitter_data:
+                old_twitter_data = pd.read_parquet('./data/twitter_data.parquet')
+                new_twitter_data = pd.concat(old_twitter_data, tweets_df)
+                new_twitter_data.to_parquet(path='./data/twitter_data.parquet', engine='pyarrow', compression='brotli')
+            else:
+                tweets_df.to_parquet(path='./data/twitter_data.parquet', engine='pyarrow', compression='brotli')                
+        else:
+            tweets_df.to_parquet(path='./data/twitter_data.parquet', engine='pyarrow', compression='brotli')
