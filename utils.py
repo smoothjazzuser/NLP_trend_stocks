@@ -37,6 +37,7 @@ import io
 import zipfile
 from sklearn.model_selection import train_test_split
 import arrow
+import snscrape.modules.twitter as sntw
 #torch.use_deterministic_algorithms(True)
 #torch.backends.cudnn.deterministic = True
 torch.manual_seed(42)
@@ -1112,3 +1113,47 @@ def download_file(url, filename, move_to=None):
             os.makedirs(os.path.dirname(move_to), exist_ok=True)
         if not os.path.exists(move_to + filename) and not os.path.exists(move_to + filename.replace(filename.split('.')[-1], 'parquet')):
             shutil.move(filename, move_to)
+
+def scrape_tweets(since='2019-11-01', until='2020-03-30', max_tweets=20):
+    """
+        Scrape tweets between since and until dates containing specified search terms. Returns max_tweets number of tweets for each search term.
+        ***Currently only searches based on company "shortName" from "company_list.pkl". This can be updated in the future by passing a list of
+        search terms into the funtion, adding more keys to search for (ex: ticker symbol, CEO/COO names, etc), or accessing a separate search terms file.***
+
+    Args:
+        since (str): Starting date (YYYY-MM-DD) for tweet queries.
+        until (str): Ending date (YYYY-MM-DD) for tweet queries.
+        max_tweets (int): Maximum number of tweets to return per search term.
+    """
+
+    # use company_list for search terms - can be updated later as an imported list when function is called
+    load_co_list = pd.read_pickle('company_list.pkl')
+
+    # avoid possible errors - remove companies with no quotes or missing company names
+    clean_list = []
+    for n in load_co_list:
+        if type(n) == dict:
+            if 'shortName' in n:
+                if n['shortName'] != None:
+                    clean_list.append(n)
+
+    #print(f"Removed {len(load_co_list)-len(clean_list)} from original list.")
+
+    tweets_list = []
+    counter = 0
+
+    # iterate through cleaned company_list
+    for name in clean_list:
+
+        # scrape twitter data based on search terms and dates, return up to max_tweets for each search
+        for i,tweet in enumerate(sntw.TwitterSearchScraper(name['shortName'] + ' since:' + since + 'until:' + until).get_items()):
+            if i > max_tweets:
+                break
+            tweets_list.append([tweet.date, tweet.rawContent, tweet.user.username, name['shortName']])
+        # twitter limits query rate, the counter simply gives an idea on progress
+        if counter % 100 == 0:
+            print(f"Scraping progress: Company list index: {counter} out of {len(clean_list)}")
+        counter += 1
+
+    tweets_df = pd.DataFrame(tweets_list, columns=['Datetime', 'Text', 'Username', 'Company'])
+    tweets_df.to_parquet(engine='pyarrow', compression='brotli')
