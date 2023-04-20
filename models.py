@@ -446,6 +446,41 @@ class classify_single_input(nn.Module):
         out = torch.nn.functional.softmax(self.head(inp), dim=1)
         return out
 
+def classify_twitter_text(save_path, model, load_path=None, bs=100, device='cuda', drop_cols=['username', 'searchterm'], MODELNAME='cardiffnlp/twitter-xlm-roberta-base-sentiment'):
+    """
+    Classifies the text in a dataframe and saves the results to a file
+    
+    Parameters
+    ----------
+    save_path : str
+        The path to save the file to
+    model : fastai.text.learner
+        The model to use to classify the text
+    load_path : str, optional
+        The path to load the file from, by default None
+    bs : int, optional
+        The batch size to use, by default 100
+    device : str, optional
+        The device to use, by default 'cuda'
+    drop_cols : list, optional
+        The columns to drop from the dataframe, by default ['username', 'searchterm']
+    MODELNAME : str, optional
+        The base name of the model to use (must be finetuned/altered using the pipeline), by default 'cardiffnlp/twitter-xlm-roberta-base-sentiment'
+    """
+    assert os.path.exists(save_path) or load_path != None, "load_path must be a valid path to a file"  
+    
+    if not os.path.exists(save_path):
+        df = load_file(load_path)
+        df = df.dropna(subset=['text'])
+        df = df.drop(columns=drop_cols)
+        list_emotions = classify_text(model, df.text.tolist(), MODELNAME=MODELNAME, bs=bs, device=device)
+        df['emotion'] = list_emotions
+        
+        save_file(df, save_path)
+        return df.sort_values(by='date', inplace=False)
+    else:
+        return load_file(save_path).sort_values(by='date', inplace=False)
+
 def emotion_classifier_load(MODEL='cardiffnlp/twitter-xlm-roberta-base-sentiment', vector_size=120, max_epocks=10, early_stopping=True, patience=500, print_every=500, device='cuda') -> nn.Module:
     """Loads the emotion classifier model and trains it if it does not exist
     

@@ -103,7 +103,18 @@ def download_dataset(url:str, unzip:bool=True, delete_zip:bool=True, files_to_mo
         rmtree('data/Data')
 
 def convert_project_files_to_parquet():
-    """"convert the files to parquet format, which is a much better for this project. Will convert all csv, xlsx, txt, json, dat and pkl files in data/ to parquet and then delete the original files (to save space)."""
+    """"convert the files to parquet format, which is a much better for this project. Will convert all csv, xlsx, txt, json, dat and pkl files in data/ to parquet and then delete the original files (to save space).
+    
+    Removes the following columns from the dataframes:
+        - Dividends
+        - Stock Splits
+        
+    Converts the following columns to the following format:
+        - Date: YYYY-MM-DD
+            
+    Returns:
+        None
+                """
     for file_type in ['csv', 'xlsx', 'txt', 'json', 'dat', 'pkl']:
         files_to_compress = glob(f'data/*/*.{file_type}') + glob(f'data/*/*/*.{file_type}') + glob(f'data/*.{file_type}')
         for file in files_to_compress:
@@ -123,71 +134,78 @@ def convert_project_files_to_parquet():
 
 def load_file(file:str):
     """Reads file into a pandas dataframe. Supports csv, xlsx, txt, json, lz4, dat and pkl files.
+
+    Very opinionated. Will lowercase all column names, and will convert the date column to a string in the format YYYY-MM-DD. This makes it so there is less data processing each time a new dataset gets created.
     
     args:
         file path (str): The file to load."""
     file_type = file.split('.')[-1]
-    if file_type == 'parquet':
-        df = pd.read_parquet(file)
-        df.columns = [x.lower() for x in df.columns]
-        return df
-    elif file_type == 'csv':
-        df =  pd.read_csv(file, low_memory=False, parse_dates=True, infer_datetime_format=True, on_bad_lines='skip', encoding_errors= 'replace')
-        df.columns = [x.lower() for x in df.columns]
-        if 'date' in df.columns:
-            df = df.dropna(subset=['date'])
-            df['date'] = df['date'].apply(lambda x: arrow.get(x).format('YYYY-MM-DD'))
-        return df
-    elif file_type == 'xlsx':
-        df =  pd.read_excel(file, parse_dates=True)
-        df.columns = [x.lower() for x in df.columns]
-        if 'date' in df.columns:
-            df = df.dropna(subset=['date'])
-            df['date'] = df['date'].apply(lambda x: arrow.get(x).format('YYYY-MM-DD'))
-        return df
-    elif file_type == 'pkl':
-        df =  load(file)
-        df.columns = [x.lower() for x in df.columns]
-        if 'date' in df.columns:
-            df = df.dropna(subset=['date'])
-            df['date'] = df['date'].apply(lambda x: arrow.get(x).format('YYYY-MM-DD'))
-        return df
-    elif file_type in ['.lz4', 'lz4']:
-        df =  load(file, compression='lz4')
-        df.columns = [x.lower() for x in df.columns]
-        if 'date' in df.columns:
-            df = df.dropna(subset=['date'])
-            df['date'] = df['date'].apply(lambda x: arrow.get(x).format('YYYY-MM-DD'))
-        return df
-    elif file_type == 'json':
-        df =  pd.read_json(file)
-        df.columns = [x.lower() for x in df.columns]
-        if 'date' in df.columns:
-            df = df.dropna(subset=['date'])
-            df['date'] = df['date'].apply(lambda x: arrow.get(x).format('YYYY-MM-DD'))
-        return df
-    elif file_type == 'txt':
-        df =  pd.read_csv(file, sep='\t', parse_dates=True, infer_datetime_format=True, on_bad_lines='skip', encoding_errors= 'replace')
-        df.columns = [x.lower() for x in df.columns]
-        if 'date' in df.columns:
-            df = df.dropna(subset=['date'])
-            df['date'] = df['date'].apply(lambda x: arrow.get(x).format('YYYY-MM-DD'))
-        return df
-    elif file_type == 'dat':
-        df =  pd.read_csv(file, sep='\t', low_memory=False, parse_dates=True, infer_datetime_format=True, on_bad_lines='skip', encoding_errors= 'replace')
-        df.columns = [x.lower() for x in df.columns]
-        if 'date' in df.columns:
-            df = df.dropna(subset=['date'])
-            df['date'] = df['date'].apply(lambda x: arrow.get(x).format('YYYY-MM-DD'))
-        return df
+    if os.path.exists(file):
+        if file_type == 'parquet':
+            df = pd.read_parquet(file)
+            df.columns = [x.lower() for x in df.columns]
+            return df
+        elif file_type == 'csv':
+            df =  pd.read_csv(file, low_memory=False, parse_dates=True, infer_datetime_format=True, on_bad_lines='skip', encoding_errors= 'replace')
+            df.columns = [x.lower() for x in df.columns]
+            if 'date' in df.columns:
+                df = df.dropna(subset=['date'])
+                df['date'] = df['date'].apply(lambda x: arrow.get(x).format('YYYY-MM-DD'))
+            return df
+        elif file_type == 'xlsx':
+            df =  pd.read_excel(file, parse_dates=True)
+            df.columns = [x.lower() for x in df.columns]
+            if 'date' in df.columns:
+                df = df.dropna(subset=['date'])
+                df['date'] = df['date'].apply(lambda x: arrow.get(x).format('YYYY-MM-DD'))
+            return df
+        elif file_type == 'pkl':
+            df =  load(file)
+            df.columns = [x.lower() for x in df.columns]
+            if 'date' in df.columns:
+                df = df.dropna(subset=['date'])
+                df['date'] = df['date'].apply(lambda x: arrow.get(x).format('YYYY-MM-DD'))
+            return df
+        elif file_type in ['.lz4', 'lz4']:
+            df =  load(file, compression='lz4')
+            df.columns = [x.lower() for x in df.columns]
+            if 'date' in df.columns:
+                df = df.dropna(subset=['date'])
+                df['date'] = df['date'].apply(lambda x: arrow.get(x).format('YYYY-MM-DD'))
+            return df
+        elif file_type == 'json':
+            df =  pd.read_json(file)
+            df.columns = [x.lower() for x in df.columns]
+            if 'date' in df.columns:
+                df = df.dropna(subset=['date'])
+                df['date'] = df['date'].apply(lambda x: arrow.get(x).format('YYYY-MM-DD'))
+            return df
+        elif file_type == 'txt':
+            df =  pd.read_csv(file, sep='\t', parse_dates=True, infer_datetime_format=True, on_bad_lines='skip', encoding_errors= 'replace')
+            df.columns = [x.lower() for x in df.columns]
+            if 'date' in df.columns:
+                df = df.dropna(subset=['date'])
+                df['date'] = df['date'].apply(lambda x: arrow.get(x).format('YYYY-MM-DD'))
+            return df
+        elif file_type == 'dat':
+            df =  pd.read_csv(file, sep='\t', low_memory=False, parse_dates=True, infer_datetime_format=True, on_bad_lines='skip', encoding_errors= 'replace')
+            df.columns = [x.lower() for x in df.columns]
+            if 'date' in df.columns:
+                df = df.dropna(subset=['date'])
+                df['date'] = df['date'].apply(lambda x: arrow.get(x).format('YYYY-MM-DD'))
+            return df
+        else:
+            try:
+                return load(file)
+            except:
+                assert False, f'File type {file_type} not supported.'
     else:
-        try:
-            return load(file)
-        except:
-            assert False, f'File type {file_type} not supported.'
+        print(f'File {file} does not exist.')
 
 def save_file(df, file:str, force_type=None):
     """Saves a pandas dataframe to a file. Supports parquet, pkl, csv and xlsx files.
+
+    Very opinionated about column names. All columns will be lower case. If a column is named 'date', it will be converted to a string in the format 'YYYY-MM-DD'.
     
     args:
         df (pd.DataFrame): The dataframe to save.
@@ -277,7 +295,25 @@ def fernet_key_encryption(password:str, name:str):
         return token.decode()
 
 def augment_list_till_length(l, maxlength=400000, num_thread = 12, mapping = {'POSITIVE': 1, 'NEGATIVE': -1, 'NEUTRAL': 0}):
-    """Augments a list of sentences until it reaches a certain length."""
+    """Augments a list of sentences until it reaches a certain length.
+    
+    args:
+        l (list): The list of sentences to augment.
+        maxlength (int): The maximum length of the augmented list.
+        num_thread (int): The number of threads to use.
+        mapping (dict): The mapping of the sentiment labels to numerical values.
+            
+    returns:
+        a classifed list of sentences with the same emotional valence as the original sentences.
+
+    Logic:
+        1. Add bert generated similar sentences to the list.
+        2. Add synonym generated similar sentences to the list.
+        3. verify that the augmented sentences have the same emotional valence as the original sentences.
+        4 add typos to the list.
+        5. verify that the augmented sentences have the same emotional valence as the original sentences.
+        6. repeat steps 1-5 until the list is at least maxlength long.        
+    """
     
     tagger = Classifier.load('sentiment')
     
@@ -450,6 +486,7 @@ def parse_emotion_dataframes(selection: int = [0, 1, 2, 3, 4, 5], ensure_only_on
     return df_train, df_test, df_augs
 
 def df_to_datetime(df: pd.DataFrame, offset_days: int = 0):
+    """Converts the date column to a datetime index and drops the date column"""
     if not isinstance(df.index, pd.DatetimeIndex):
         #drop the time of day
         #df.date = df.date.dt.date
@@ -512,7 +549,7 @@ def interpolate_months_to_days(df: pd.DataFrame, extend_trend_to_today: bool = F
     
     return df
 
-def intersect_df(df1: pd.DataFrame, df2: pd.DataFrame, interpolate_to_days: bool = False, extend_trend_to_today: bool = False):
+def intersect_df(df1: pd.DataFrame, df2: pd.DataFrame, interpolate_to_days: bool = False, extend_trend_to_today: bool = False, offsett=0):
     """Performantly Intersects two dataframes based on their (datetime) index.
     
     Args: 
@@ -526,27 +563,51 @@ def intersect_df(df1: pd.DataFrame, df2: pd.DataFrame, interpolate_to_days: bool
 
 
     if interpolate_to_days:
-        df1 = interpolate_months_to_days(df1, extend_trend_to_today)
-        df2 = interpolate_months_to_days(df2, extend_trend_to_today)
+        df1 = interpolate_months_to_days(df1, extend_trend_to_today, offset_days=offsett)
+        df2 = interpolate_months_to_days(df2, extend_trend_to_today, offset_days=offsett)
 
     df1 = df1[df1.index.isin(df2.index)]
     df2 = df2[df2.index.isin(df1.index)]
 
     return df1, df2
 class get_macroeconomic_data ():
-    """Aquire historical macroeconomic data from different sources."""
+    """Aquire historical macroeconomic data from different sources.
+    
+    Not yet implemented:
+    """
     def __init__(self, path):
-        self.path = path
+        raise NotImplementedError
 
 class aquire_stock_search_terms():
     """
     Gather the company info for all the ticker symbols and return a dataframe with relevant search terms for each company.
-
     If the stocks dataset is updated on kaggle, compank_list.pkl needs to be deleted and this run again if the symbols have changed. 
 
-    TODO: It would be more efficient to manually pull the new stock data ourselves and keep the old ticker symbols.
+        args:
+
+            - file_path (str): The path to the stock data.
+            - file_ext (str): The file extension of the stock data.
+
+        functions:
+            >>> verify_dataset_downloaded: Check if the stock data is downloaded.
+            >>> load_symbols: Load all the stock symbols.
+            >>> ticker_list_to_dataframe: Convert the list of tickers to a dataframe.
+            >>> get_company_list: Get the company list from yahoo finance.    
+            >>> process_information: Process the information from yahoo finance.
+            >>> get_quote_type: Return the quote type for a given ticker.
+            >>> get_sector: Return the sector for a given ticker.
+            >>> get_industry: Return the industry for a given ticker.
+            >>> get company_officers: Return the company officers for a given ticker.
+
+        All the functions are called when the class is instantiated.
+
+        Returns:
+            - A dataframe with relevant search terms for each company in the stock dataset.
+            - Results are saved to file to avoid having to run this again.
+
     """
     def __init__(self, file_path = 'data/Stock/', file_ext = '.parquet'):
+        """Aquire the company info for all the ticker symbols and return a dataframe with relevant search terms for each company."""
         self.file_path = file_path
         self.file_ext = file_ext
 
@@ -562,6 +623,7 @@ class aquire_stock_search_terms():
         return self.stocks_symbols
 
     def ticker_list_to_dataframe(self):
+        """Convert the list of tickers to a dataframe."""
         self.data = pd.DataFrame(self.stocks_symbols, columns = ['ticker'])
 
     def get_quote_type(self, index):
@@ -617,6 +679,7 @@ class aquire_stock_search_terms():
         return ""
 
     def get_company_officers(self, index):
+        """Return the company officers for a given ticker."""
         if type(index) == int:
             if 'companyOfficers' in self.yh_tickers[index]:
                 if len(self.yh_tickers[index]["companyOfficers"]) > 0:
@@ -700,6 +763,7 @@ class aquire_stock_search_terms():
                 self.missed.append(name)
     
     def get_year_first_traded (self, index):
+        """Return the year the company was founded. If not found, return an empty string. Has a chance of returning the wrong year."""
         if type(index) == int:
             if 'firstTradeDateEpochUtc' in self.yh_tickers[index]:
                 return self.yh_tickers[index]['firstTradeDateEpochUtc']
@@ -720,6 +784,7 @@ class aquire_stock_search_terms():
         return ""
 
     def process_information(self):
+        """Process the information from the company list."""
         self.data.columns = [x.lower() for x in self.data.columns]
         self.data['company'] = [self.get_company(t) for t in range(len(self.yh_tickers))]
         self.data["top_executive"] = [self.get_company_officers(t) for t in range(len(self.yh_tickers))] 
@@ -730,6 +795,7 @@ class aquire_stock_search_terms():
         self.data['year_founded'] = [self.get_year_founded(t) for t in range(len(self.yh_tickers))]
 
     def ticker_info(self, ticker):
+        """Return a dictionary of information about the given ticker. If the ticker is not found, return an empty dictionary."""
         ticker = ticker.upper()
 
         if ticker not in self.stocks_symbols:
@@ -747,6 +813,10 @@ class aquire_stock_search_terms():
         return {**asset_p, **quote_t}
         
     def verify_dataset_downloaded(self):
+        """
+        Verify that the dataset has been downloaded and extracted correctly.
+        
+        If not, print an error message and set self.data to an empty dataframe."""
         error = ""
         directions = "\n Please ensure that you have downloaded the stock data first from https://www.kaggle.com/datasets/footballjoe789/us-stock-dataset. \n Then extract Stock/ to the data/ folder and move Stock_List to data/. \n Then run this script again. \n Thank you. \n"
 
@@ -1040,6 +1110,9 @@ def stock_missing_days(ticker, start_date=None, remove_days_in_between_datapoint
     Args:
         ticker: str
         start_date: str in YYYY-MM-DD format
+        remove_days_in_between_datapoints: bool
+        exchange: str
+        year_format: str
 
     Returns:
         missing_yyyymmdd: list of str
@@ -1132,6 +1205,31 @@ def download_file(url, filename, move_to=None):
         if not os.path.exists(move_to + filename) and not os.path.exists(move_to + filename.replace(filename.split('.')[-1], 'parquet')):
             shutil.move(filename, move_to)
 
+def daily_stats(df):
+    """Takes in a dataframe and returns the daily std, mean, outliers, and count of the dataframe
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The dataframe to be grouped by date
+        
+        Returns
+        -------
+        pd.DataFrame
+            The dataframe with the daily stats
+    """
+    df = df.drop(['text', 'stock'], axis=1, errors='ignore')
+    df = pd.concat([df, pd.DataFrame(df.emotion.tolist(), index=df.index)], axis=1)
+    df = df.drop(columns=['emotion'])
+
+    # group by date
+    df = df.groupby('date').agg([lambda x: x.std() if x.count() > 1 else 0, lambda x: x.mean() if x.count() > 1 else 0, lambda x: x.count() if x.count() > 1 else 0])
+    # flatten the columns
+    df.columns = ['_'.join([str(x).replace('<lambda_0>', 'std').replace('<lambda_1>', 'mean').replace('<lambda_2>', 'count').replace('<lambda_3>', 'occured') for x in col]) for col in df.columns.values]
+    df.reset_index(inplace=True)
+    return df
+    
+
 def scrape_tweets(since='2019-11-01', until='2020-03-30', max_tweets=20, update_twitter_data=True, co_list=['#kr', 'the kroger co.', 'william rodney mcmullen', 'grocery stores']):
     """
         Scrape tweets between since and until dates containing specified search terms. Returns max_tweets number of tweets for each search term.
@@ -1188,7 +1286,6 @@ def scrape_tweets(since='2019-11-01', until='2020-03-30', max_tweets=20, update_
             for name in co_list:
                 # scrape twitter data based on search terms and dates, return up to max_tweets for each search
                 # get daily intervals for date range using arrow
-                
 
                 for since_, until_ in range_tuples:
                     for i,tweet in enumerate(sntw.TwitterSearchScraper(name + ' since:' + since_ + ' until:' + until_).get_items()):
@@ -1205,11 +1302,8 @@ def scrape_tweets(since='2019-11-01', until='2020-03-30', max_tweets=20, update_
                             pbar.update(1)
                             counter += 1
 
-                        sleep(random.random() * random.randint(1, 2))
+                        sleep(random.random() * random.randint(2, 4))
                 
-                
-            
-
             # convert scraped tweets to dataframe
             tweets_df = pd.DataFrame(tweets_list, columns=['date', 'text', 'username', 'searchterm'])
             tweets_df = tweets_df.drop_duplicates(inplace=False, subset=['date', 'text', 'username', 'searchterm']).reset_index(drop=True, inplace=False).dropna(inplace=False)
