@@ -43,6 +43,8 @@ import snscrape.modules.twitter as sntw
 torch.manual_seed(42)
 cuda = torch.device("cuda")
 cpu = torch.device("cpu")
+from time import sleep
+from random import random
 
 def download_dataset(url:str, unzip:bool=True, delete_zip:bool=True, files_to_move:dict = {}, delete=False, dest_name:str = None, verbose:bool = True, min_files_expected=1):
     """Downloads the datasets from kaggle using the official kaggle api.
@@ -1212,6 +1214,9 @@ def scrape_tweets(since='2019-11-01', until='2020-03-30', max_tweets=20, update_
                 if os.path.exists(f'./data/Twitter/twitter_data{unique_search_terms}.parquet'):
                     df = load_file(f'./data/Twitter/twitter_data{unique_search_terms}.parquet')
                     last_date = df['datetime'].apply(lambda x: arrow.get(x).date()).max()
+                    first_date = df['datetime'].apply(lambda x: arrow.get(x).date()).min()
+                    days_already_scraped = [x.format('YYYY-MM-DD') for x in arrow.Arrow.range('day', first_date, last_date)]
+                    range_tuples = [(x[0], x[1]) for x in range_tuples if x[0] not in days_already_scraped]
                     if last_date >= arrow.get(since).date():
                         # today's date
                         today = arrow.now().date()
@@ -1241,13 +1246,15 @@ def scrape_tweets(since='2019-11-01', until='2020-03-30', max_tweets=20, update_
                                 pbar.desc = f"Scraping progress: no tweets found for {name} on {since_}"
                                 pbar.update(1)
                                 counter += 1
+
+                            sleep(random(.5, 3))
                     
                     
                 
 
                 # convert scraped tweets to dataframe
                 tweets_df = pd.DataFrame(tweets_list, columns=['date', 'text', 'username', 'searchterm'])
-                tweets_df = tweets_df.drop_duplicates(inplace=False, subset=['date', 'text', 'username', 'searchterm']).reset_index(drop=True, inplace=False).dropna(['date', 'text'])
+                tweets_df = tweets_df.drop_duplicates(inplace=False, subset=['date', 'text', 'username', 'searchterm']).reset_index(drop=True, inplace=False).dropna(inplace=False)
 
                 # if updating existing twitter data append to existing file (if it exists), else save as new file
                 if os.path.exists(f'./data/Twitter/twitter_data{unique_search_terms}.parquet'):
@@ -1269,9 +1276,21 @@ def scrape_tweets(since='2019-11-01', until='2020-03-30', max_tweets=20, update_
         print("Error occured while scraping Twitter data.")
         try:
             tweets_df = pd.DataFrame(tweets_list, columns=['date', 'text', 'username', 'searchterm'])
-            tweets_df = tweets_df.drop_duplicates(inplace=False, subset=['date', 'text', 'username', 'searchterm']).reset_index(drop=True, inplace=False).dropna(['date', 'text'])
+            tweets_df = tweets_df.drop_duplicates(inplace=False, subset=['date', 'text', 'username', 'searchterm']).reset_index(drop=True, inplace=False).dropna()
             save_file(tweets_df, f'./data/Twitter/recovery{unique_search_terms}.parquet')
+            print(f"Saved recovery file to ./data/Twitter/recovery{unique_search_terms}.parquet")
         except:
-            pass
+            print("Error occured while saving recovery file. Returning partial data.")
+
+        return tweets_list
+    except KeyboardInterrupt:
+        print("KeyboardInterrupt. Attempting to save recovery file else return partial data.")
+        try:
+            tweets_df = pd.DataFrame(tweets_list, columns=['date', 'text', 'username', 'searchterm'])
+            tweets_df = tweets_df.drop_duplicates(inplace=False, subset=['date', 'text', 'username', 'searchterm']).reset_index(drop=True, inplace=False).dropna()
+            save_file(tweets_df, f'./data/Twitter/recovery{unique_search_terms}.parquet')
+            print(f"Saved recovery file to ./data/Twitter/recovery{unique_search_terms}.parquet")
+        except:
+            print("Error occured while saving recovery file. Returning partial data.")
 
         return tweets_list
