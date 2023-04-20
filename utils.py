@@ -44,7 +44,8 @@ torch.manual_seed(42)
 cuda = torch.device("cuda")
 cpu = torch.device("cpu")
 from time import sleep
-from random import random
+import random
+import sys
 
 def download_dataset(url:str, unzip:bool=True, delete_zip:bool=True, files_to_move:dict = {}, delete=False, dest_name:str = None, verbose:bool = True, min_files_expected=1):
     """Downloads the datasets from kaggle using the official kaggle api.
@@ -1142,29 +1143,19 @@ def scrape_tweets(since='2019-11-01', until='2020-03-30', max_tweets=20, update_
         until (str): Ending date (YYYY-MM-DD) for tweet queries. If update_twitter_data is True, will use the current date if since>until.
         max_tweets (int): Maximum number of tweets to return per search term.
         update_twitter_data (bool): If True, will update the twitter data for each search term. If False, will only return the existing data.
-        co_list (list): List of search terms to use for twitter queries. If None, will use the "shortName" key from "company_list.pkl".
+        co_list (list): List of search terms to use for twitter queries. 
     """
+    assert type(co_list) == list, 'co_list must be a list of strings.'
+    assert type(since) == str, 'since must be a string in the format YYYY-MM-DD.'
+    assert type(until) == str, 'until must be a string in the format YYYY-MM-DD.'
+    assert type(max_tweets) == int, 'max_tweets must be an integer.'
+    assert type(update_twitter_data) == bool, 'update_twitter_data must be a boolean.'
+
     try:
         if not os.path.exists('data/Twitter'):
             os.makedirs('data/Twitter', exist_ok=True)
 
-
-        # use company_list for search terms - can be updated later as an imported list when function is called
-        if co_list == None:
-            load_co_list = pd.read_pickle('company_list.pkl')
-
-            # avoid possible errors - remove companies with no quotes or missing company names
-            clean_list = []
-            for n in load_co_list:
-                if type(n) == dict:
-                    if 'shortName' in n:
-                        if n['shortName'] != None:
-                            clean_list.append(n)
-        else:
-            clean_list = co_list
-
-
-        #print(f"Removed {len(load_co_list)-len(clean_list)} from original list.")
+        clean_list = co_list
 
         tweets_list = []
         counter = 0
@@ -1173,124 +1164,74 @@ def scrape_tweets(since='2019-11-01', until='2020-03-30', max_tweets=20, update_
 
         # iterate through cleaned company_list
         with tqdm(total=len(clean_list) * len(range_tuples)) as pbar:
-            if co_list == None:
-                for name in clean_list:
-                    # scrape twitter data based on search terms and dates, return up to max_tweets for each search
-                    for i,tweet in enumerate(sntw.TwitterSearchScraper(name['shortName'] + ' since:' + since + ' until:' + until).get_items()):
-                        if i > max_tweets:
-                            break
-                        tweets_list.append([tweet.date, tweet.rawContent, tweet.user.username, name['shortName']])
-                    
-                    # twitter limits query rate, the counter simply gives an idea on progress
-                    if counter % 100 == 0:
-                        #print(f"Scraping progress: Company list index: {counter} out of {len(clean_list)}")
-                        pbar.desc = f"Scraping progress: Company list index: {counter} out of {len(clean_list)}"
-                        pbar.update(1)
-                    counter += 1
-
-                    # convert scraped tweets to dataframe
-                    tweets_df = pd.DataFrame(tweets_list, columns=['datetime', 'text', 'username', 'searchterm'])
-                    unique_search_terms = tweets_df['searchterm'].unique().values.tolist()
-                    unique_search_terms = "___" + "---".join(unique_search_terms)
-
-                    # if updating existing twitter data append to existing file (if it exists), else save as new file
-                    if os.path.exists(f'./data/Twitter/twitter_data{unique_search_terms}.parquet'):
-                        if update_twitter_data:
-                            #old_twitter_data = pd.read_parquet('./data/Twitter/twitter_data.parquet')
-                            old_twitter_data = load_file(f'./data/Twitter/twitter_data{unique_search_terms}.parquet')
-                            new_twitter_data = pd.concat(old_twitter_data, tweets_df)
-                            new_twitter_data = new_twitter_data.drop_duplicates(inplace=False, subset=['datetime', 'text', 'username', 'searchterm'])
-                            #new_twitter_data.to_parquet(path='./data/Twitter/twitter_data.parquet', engine='pyarrow', compression='brotli')
-                            save_file(new_twitter_data, f'./data/Twitter/twitter_data{unique_search_terms}.parquet')
-                        else:
-                            #tweets_df.to_parquet(path='./data/Twitter/twitter_data.parquet', engine='pyarrow', compression='brotli')  
-                            save_file(tweets_df, f'./data/Twitter/twitter_data{unique_search_terms}.parquet')       
+            unique_search_terms = "___" + "---".join(co_list)
+            if os.path.exists(f'./data/Twitter/twitter_data{unique_search_terms}.parquet'):
+                df = load_file(f'./data/Twitter/twitter_data{unique_search_terms}.parquet')
+                last_date = arrow.get(df['date'].apply(lambda x: arrow.get(x).date()).max())
+                first_date = arrow.get(df['date'].apply(lambda x: arrow.get(x).date()).min())
+                days_already_scraped = [arrow.get(x).format('YYYY-MM-DD') for x in df.date.unique().tolist()]
+                range_tuples = [(x[0], x[1]) for x in range_tuples if x[0] not in days_already_scraped]
+                pbar.total = len(range_tuples) * len(co_list)
+                if len(range_tuples) == 0:
+                    print(f"Twitter data is up to date. Last date: {last_date.format('YYYY-MM-DD')}")
+                    return
+                if last_date >= arrow.get(since):
+                    # today's date
+                    today = arrow.now().date()
+                    if last_date == today:
+                        print(f"Twitter data is up to date. Last date: {last_date.format('YYYY-MM-DD')}")
+                        return
                     else:
-                        #tweets_df.to_parquet(path='./data/Twitter/twitter_data.parquet', engine='pyarrow', compression='brotli')
-                        save_file(tweets_df, f'./data/Twitter/twitter_data{unique_search_terms}.parquet')           
-            else:
-                unique_search_terms = list(set(co_list))
-                unique_search_terms = "___" + "---".join(unique_search_terms)
-                if os.path.exists(f'./data/Twitter/twitter_data{unique_search_terms}.parquet'):
-                    df = load_file(f'./data/Twitter/twitter_data{unique_search_terms}.parquet')
-                    last_date = df['datetime'].apply(lambda x: arrow.get(x).date()).max()
-                    first_date = df['datetime'].apply(lambda x: arrow.get(x).date()).min()
-                    days_already_scraped = [x.format('YYYY-MM-DD') for x in arrow.Arrow.range('day', first_date, last_date)]
-                    range_tuples = [(x[0], x[1]) for x in range_tuples if x[0] not in days_already_scraped]
-                    if last_date >= arrow.get(since).date():
-                        # today's date
-                        today = arrow.now().date()
-                        if last_date.format('YYYY-MM-DD') == today.format('YYYY-MM-DD'):
-                            print(f"Twitter data is up to date. Last date: {last_date.format('YYYY-MM-DD')}")
-                            return
-                        else:
-                            since = last_date.shift(days=1).format('YYYY-MM-DD')
-                            print(f"Updating Twitter data from {since} to {until}.")
+                        since = last_date.shift(days=1).format('YYYY-MM-DD')
+                        print(f"Updating Twitter data from {since} to {until}.")
 
-                for name in co_list:
-                    # scrape twitter data based on search terms and dates, return up to max_tweets for each search
-                    # get daily intervals for date range using arrow
-                    
-
-                    for since_, until_ in range_tuples:
-                        for i,tweet in enumerate(sntw.TwitterSearchScraper(name + ' since:' + since_ + ' until:' + until_).get_items()):
-                            if i > max_tweets:
-                                break
-                            if len(tweet.rawContent) > 0:
-                                tweets_list.append([tweet.date, tweet.rawContent, tweet.user.username, name])
-                                # twitter limits query rate, the counter simply gives an idea on progress
-                                pbar.desc = f"Scraping progress: found {len(tweets_list)} tweets for {name} on {since_}"
-                                pbar.update(1)
-                                counter += 1
-                            else:
-                                pbar.desc = f"Scraping progress: no tweets found for {name} on {since_}"
-                                pbar.update(1)
-                                counter += 1
-
-                            sleep(random(.5, 3))
-                    
-                    
+            for name in co_list:
+                # scrape twitter data based on search terms and dates, return up to max_tweets for each search
+                # get daily intervals for date range using arrow
                 
 
-                # convert scraped tweets to dataframe
-                tweets_df = pd.DataFrame(tweets_list, columns=['date', 'text', 'username', 'searchterm'])
-                tweets_df = tweets_df.drop_duplicates(inplace=False, subset=['date', 'text', 'username', 'searchterm']).reset_index(drop=True, inplace=False).dropna(inplace=False)
+                for since_, until_ in range_tuples:
+                    for i,tweet in enumerate(sntw.TwitterSearchScraper(name + ' since:' + since_ + ' until:' + until_).get_items()):
+                        if i > max_tweets:
+                            break
+                        if len(tweet.rawContent) > 0:
+                            tweets_list.append([tweet.date, tweet.rawContent, tweet.user.username, name])
+                            # twitter limits query rate, the counter simply gives an idea on progress
+                            pbar.desc = f"Scraping progress: found {len(tweets_list)} tweets for {name} on {since_}"
+                            pbar.update(1)
+                            counter += 1
+                        else:
+                            pbar.desc = f"Scraping progress: no tweets found for {name} on {since_}"
+                            pbar.update(1)
+                            counter += 1
 
-                # if updating existing twitter data append to existing file (if it exists), else save as new file
-                if os.path.exists(f'./data/Twitter/twitter_data{unique_search_terms}.parquet'):
-                    if update_twitter_data:
-                        #old_twitter_data = pd.read_parquet('./data/Twitter/twitter_data.parquet')
-                        old_twitter_data = load_file(f'./data/Twitter/twitter_data{unique_search_terms}.parquet')
-                        new_twitter_data = pd.concat([old_twitter_data, tweets_df], ignore_index=True)
-                        new_twitter_data = new_twitter_data.drop_duplicates(inplace=False, subset=['date', 'text', 'username', 'searchterm'])
-                        #new_twitter_data.to_parquet(path='./data/Twitter/twitter_data.parquet', engine='pyarrow', compression='brotli')
-                        save_file(new_twitter_data, f'./data/Twitter/twitter_data{unique_search_terms}.parquet')
-                    else:
-                        #tweets_df.to_parquet(path='./data/Twitter/twitter_data.parquet', engine='pyarrow', compression='brotli')  
-                        save_file(tweets_df, f'./data/Twitter/twitter_data{unique_search_terms}.parquet')       
+                        sleep(random.random() * random.randint(1, 2))
+                
+                
+            
+
+            # convert scraped tweets to dataframe
+            tweets_df = pd.DataFrame(tweets_list, columns=['date', 'text', 'username', 'searchterm'])
+            tweets_df = tweets_df.drop_duplicates(inplace=False, subset=['date', 'text', 'username', 'searchterm']).reset_index(drop=True, inplace=False).dropna(inplace=False)
+
+            # if updating existing twitter data append to existing file (if it exists), else save as new file
+            if os.path.exists(f'./data/Twitter/twitter_data{unique_search_terms}.parquet'):
+                if update_twitter_data:
+                    #old_twitter_data = pd.read_parquet('./data/Twitter/twitter_data.parquet')
+                    old_twitter_data = load_file(f'./data/Twitter/twitter_data{unique_search_terms}.parquet')
+                    new_twitter_data = pd.concat([old_twitter_data, tweets_df], ignore_index=True)
+                    new_twitter_data = new_twitter_data.drop_duplicates(inplace=False, subset=['date', 'text', 'username', 'searchterm'])
+                    #new_twitter_data.to_parquet(path='./data/Twitter/twitter_data.parquet', engine='pyarrow', compression='brotli')
+                    save_file(new_twitter_data, f'./data/Twitter/twitter_data{unique_search_terms}.parquet')
                 else:
-                    #tweets_df.to_parquet(path='./data/Twitter/twitter_data.parquet', engine='pyarrow', compression='brotli')
-                    save_file(tweets_df, f'./data/Twitter/twitter_data{unique_search_terms}.parquet')
+                    #tweets_df.to_parquet(path='./data/Twitter/twitter_data.parquet', engine='pyarrow', compression='brotli')  
+                    save_file(tweets_df, f'./data/Twitter/twitter_data{unique_search_terms}.parquet')       
+            else:
+                #tweets_df.to_parquet(path='./data/Twitter/twitter_data.parquet', engine='pyarrow', compression='brotli')
+                save_file(tweets_df, f'./data/Twitter/twitter_data{unique_search_terms}.parquet')
     except Exception as e:
         print(e)
-        print("Error occured while scraping Twitter data.")
-        try:
-            tweets_df = pd.DataFrame(tweets_list, columns=['date', 'text', 'username', 'searchterm'])
-            tweets_df = tweets_df.drop_duplicates(inplace=False, subset=['date', 'text', 'username', 'searchterm']).reset_index(drop=True, inplace=False).dropna()
-            save_file(tweets_df, f'./data/Twitter/recovery{unique_search_terms}.parquet')
-            print(f"Saved recovery file to ./data/Twitter/recovery{unique_search_terms}.parquet")
-        except:
-            print("Error occured while saving recovery file. Returning partial data.")
-
         return tweets_list
     except KeyboardInterrupt:
         print("KeyboardInterrupt. Attempting to save recovery file else return partial data.")
-        try:
-            tweets_df = pd.DataFrame(tweets_list, columns=['date', 'text', 'username', 'searchterm'])
-            tweets_df = tweets_df.drop_duplicates(inplace=False, subset=['date', 'text', 'username', 'searchterm']).reset_index(drop=True, inplace=False).dropna()
-            save_file(tweets_df, f'./data/Twitter/recovery{unique_search_terms}.parquet')
-            print(f"Saved recovery file to ./data/Twitter/recovery{unique_search_terms}.parquet")
-        except:
-            print("Error occured while saving recovery file. Returning partial data.")
-
         return tweets_list
