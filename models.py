@@ -489,7 +489,7 @@ class model(nn.Module):
         super(model, self).__init__()
         self.num_classes = num_classes
         self.resnet = models.resnet18(pretrained=False)
-        self.portfolio_history = {'cash': [cash], 'stocks': [0], 'total': [cash], 'action': []}
+        self.portfolio_history = {'cash': [cash], 'stocks': [0], 'total': [cash], 'action': ['hold']}
 
         self.new_input_size = input_size
         # update resnet input size
@@ -503,6 +503,7 @@ class model(nn.Module):
         self.dense = nn.LazyLinear(5)
 
         self.cash = cash
+        self.start_cash = cash
         #self.action(torch.as_tensor([0], dtype=torch.float32).to('cuda'))
         self.price = 0
         self.stocks = 0
@@ -547,30 +548,53 @@ class model(nn.Module):
         price.requires_grad = True
         old_value = self.get_value(price)
 
-        if amount > 0.33:
-            amount = 1
-        elif amount < -0.33:
-            amount = -1
-        else:
-            amount = 0
+        with torch.no_grad():
+            if amount > 0.33:
+                if self.cash >= price:
+                    self.cash -= price
+                    self.stocks += 1.0
+                else:
+                    pass
+            elif amount < -0.33:
+                if self.stocks >= 1.0:
+                    self.cash += price 
+                    self.stocks -= 1.0
+                else:
+                    pass
+            else:
+                pass
 
-        self.cash -= price * amount
-        self.stocks += amount
+        #self.cash -= price * amount
+        
 
         new_value = self.get_value(price)
 
         # maximize profit (reward)
         change = new_value - old_value
         change = -change
+        diff_from_start = new_value - self.start_cash
+        diff_from_start = -diff_from_start
         
         if track:
             self.portfolio_history['cash'].append(self.cash)
             self.portfolio_history['stocks'].append(self.stocks)
             self.portfolio_history['total'].append(self.cash + self.stocks * price)
-            self.portfolio_history['action'].append(['sell', 'hold', 'buy'][amount + 1])
+            if amount > 0.33:
+                if self.cash >= price:
+                    self.portfolio_history['action'].append('buy')
+                else:
+                    self.portfolio_history['action'].append('hold')
+            elif amount < -0.33:
+                if self.stocks >= 1.0:
+                    self.portfolio_history['action'].append('sell')
+                else:
+                    self.portfolio_history['action'].append('hold')
+            else:
+                self.portfolio_history['action'].append('hold')
         
-        loss = torch.as_tensor(change, dtype=torch.float32).to('cuda')
-        loss = torch.functional.F.softmax(loss, dim=0)
+        loss1 = torch.as_tensor(change, dtype=torch.float32).to('cuda')
+        loss2 = torch.as_tensor(diff_from_start, dtype=torch.float32).to('cuda')
+        loss = 1 / (1 + torch.exp(loss1 + loss2))
         return loss
 
 
