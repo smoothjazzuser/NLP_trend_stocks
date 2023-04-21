@@ -1399,7 +1399,12 @@ class sliding_window_view_generator():
     """
     def __init__(self, x, window_size=32, device='cuda'):
         self.x = x
-        self.x = torch.from_numpy(self.x.astype(np.float32)).to(device)
+        self.x = torch.from_numpy(self.x.astype(np.float32))
+        # replace nan with 0
+        self.x = torch.where(torch.isnan(self.x), torch.zeros_like(self.x), self.x)
+        # replace inf with 1
+        self.x = torch.where(torch.isinf(self.x), torch.ones_like(self.x), self.x)
+        self.x = self.x.to(device)
         self.x = torch.nn.functional.pad(self.x, (window_size, 0), 'constant', 0)
         self.window_size = window_size
         self.current_index = 0
@@ -1412,11 +1417,10 @@ class sliding_window_view_generator():
         return self
 
     def next(self):
-        i = self.current_index
         self.current_index += 1
         if self.current_index >= len(self.x):
             self.current_index = 0
         if self.x[0].shape[0] > 2:
-            yield self.x[i:i+self.window_size]
+            yield self.x[self.current_index:self.current_index+self.window_size]
         else:
-            yield self.x[i:i+self.window_size].unsqueeze(0).permute(0,2,1,3)
+            yield self.x[self.current_index:self.current_index+self.window_size].unsqueeze(0).permute(0,2,1,3)
