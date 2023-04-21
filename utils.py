@@ -1329,3 +1329,94 @@ def scrape_tweets(since='2019-11-01', until='2020-03-30', max_tweets=20, update_
     except KeyboardInterrupt:
         print("KeyboardInterrupt. Attempting to save recovery file else return partial data.")
         return tweets_list
+
+def merge_data_timeline(company_emotion_stats, stock, generic_news_stats, fillzero=True, impute=True):
+        """
+        Merges the data from the company emotion stats and the generic news stats into a single dataframe
+
+        Also performs feature engineering on the data by normalizing the data and creating columns for time features
+        
+        Parameters
+        ----------
+        company_emotion_stats : pandas.DataFrame
+            The dataframe containing the company emotion stats
+        generic_news_stats : pandas.DataFrame
+            The dataframe containing the generic news stats
+        fillzero : bool, optional
+            Whether to fill the NaN values with 0, by default True
+        impute : bool, optional
+            Whether to impute the NaN values (missing days), by default True
+        
+        Returns
+        -------
+        pandas.DataFrame
+            The merged dataframe by date, with zeros for all values where there is no intersection 
+        """
+        company_emotion_stats.date = company_emotion_stats.date.apply(lambda x: arrow.get(str(x)[:10]).format('YYYY-MM-DD') if len(str(x)) > 7 else None)
+        generic_news_stats.date = generic_news_stats.date.apply(lambda x: arrow.get(str(x)[:10]).format('YYYY-MM-DD') if len(str(x)) > 7 else None)
+        df = pd.merge(company_emotion_stats, generic_news_stats, how='outer', on='date')
+        df = df.sort_values(by='date', inplace=False)
+        df = df.dropna(subset=['date'])
+
+        df, stock = intersect_df(df, stock)
+        df = pd.merge(df, stock, how='outer', on='date')
+        df = df.sort_values(by='date', inplace=False).reset_index(drop=True, inplace=False)
+        df['day_of_week'] = df['date'].apply(lambda x: arrow.get(x).weekday())
+        df['day_of_month'] = df['date'].apply(lambda x: arrow.get(x).day)
+        df['month'] = df['date'].apply(lambda x: arrow.get(x).month)
+        df['mon_or_fri'] = df['day_of_week'].apply(lambda x: 1 if x == 0 or x == 4 else 0)
+        # diff between high and low
+        df['range'] = df['high'] - df['low']
+        # percent change
+        df['open'] = df['open'].pct_change()
+        df['high'] = df['high'].pct_change()
+        df['low'] = df['low'].pct_change()
+        df['volume'] = df['volume'].pct_change()
+        df['close'] = df['close'].pct_change()
+        df['range'] = df['range'].pct_change()
+        if fillzero:
+            df = df.fillna(0)
+        if impute:
+            df = df.interpolate(method='linear')
+        
+        return  df
+
+class sliding_window_view_generator():
+    """
+    Creates a sliding window view of the input array. Pads the input array with zeros to make sure the sliding window view is the same size as the input array.
+    
+    Parameters
+    ----------
+    x : torch.Tensor
+        The input array
+    window_size : int
+        The size of the sliding window
+    
+    Yields
+    -------
+    numpy.ndarray
+        The sliding window view of the input array
+    """
+    def __init__(self, x, window_size=32, device='cuda'):
+        self.x = x
+        self.x = torch.from_numpy(self.x.astype(np.float32)).to(device)
+        self.x = torch.nn.functional.pad(self.x, (window_size, 0), 'constant', 0)
+        self.window_size = window_size
+        self.current_index = 0
+        if self.x[0].shape[0] > 2:
+            self.shape = (len(self.x),) + (self.x[0].shape[0],) + self.x[0].shape[1:]
+        else:
+            self.shape = (len(self.x),) + (self.x[0].shape[0],) + (self.window_size,) + self.x[0].shape[1:]
+        
+    def __iter__(self):
+        return self
+
+    def next(self):
+        i = self.current_index
+        self.current_index += 1
+        if self.current_index >= len(self.x):
+            self.current_index = 0
+        if self.x[0].shape[0] > 2:
+            yield self.x[i:i+self.window_size]
+        else:
+            yield self.x[i:i+self.window_size].unsqueeze(0).permute(0,2,1,3)

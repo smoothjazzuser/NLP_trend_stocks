@@ -14,6 +14,8 @@ import pandas as pd
 import os
 import matplotlib.pyplot as plt
 from utils import get_sentence_vectors, save_file, load_file
+import arrow
+import torchvision.models as models
 
 class siamese_network(nn.Module):
     """Instantiate the xlm-roberta-base-sentiment model and add a siamese network head to it to replace the sentiment classifier head with emotion classifier head. Allowes for the model to later be altered to train on non-triplet data after pre-training on triplet data.
@@ -480,6 +482,95 @@ def classify_twitter_text(save_path, model, load_path=None, bs=100, device='cuda
         return df.sort_values(by='date', inplace=False)
     else:
         return load_file(save_path).sort_values(by='date', inplace=False)
+
+class model(nn.Module):
+    """informer model for time series forecasting"""
+    def __init__(self, input_size, num_classes, cash=torch.as_tensor(10000, dtype=torch.float32).to('cuda'), ticker='KR'):
+        super(model, self).__init__()
+        self.num_classes = num_classes
+        self.resnet = models.resnet18(pretrained=False)
+        self.portfolio_history = {'cash': [cash], 'stocks': [0], 'total': [cash], 'action': []}
+
+        self.new_input_size = input_size
+        # update resnet input size
+        self.resnet.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        self.resnet.conv1.weight = nn.Parameter(self.resnet.conv1.weight.sum(dim=1, keepdim=True))
+        self.resnet.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.resnet.fc = nn.LazyLinear(self.num_classes)
+        self.rl_head = nn.LazyLinear(1)
+        self.dense_portfolio = nn.LazyLinear(5)
+        self.dense_resnet = nn.LazyLinear(5)
+        self.dense = nn.LazyLinear(5)
+
+        self.cash = cash
+        self.stocks = 0
+        self.stock_ticker_symbol = ticker
+        self.i_train = 0
+        self.i_test = 0
+        self.get_stock_history(ticker)
+
+    def forward(self, x):
+        """forward pass"""
+        portfolio = torch.as_tensor([self.cash, self.stocks, self.price * self.stocks], dtype=torch.float32).unsqueeze(0).to('cuda')
+        out = self.resnet(x)
+        
+        # flatten out1 and portfolio
+        
+        dense_portfolio = self.dense_portfolio(portfolio)
+        out1 = torch.squeeze(out, 0)
+        dense_portfolio = torch.squeeze(dense_portfolio, 0)
+
+        dense_resnet = self.dense_resnet(out1)
+        dense = torch.cat((dense_portfolio, dense_resnet))
+        outcat2 = torch.concat((dense, out1))
+        out2 = self.rl_head(outcat2)
+        return out.permute(1,0).to('cuda'), out2.to('cuda')
+
+    def action(self, amount, train=True, track=False):
+        """actions are either 0, 1, or -1"""
+       
+        amount = amount.squeeze(0).item()
+        if train: 
+            price = torch.as_tensor(self.train['close'][self.i_train], dtype=torch.float32).to('cuda')
+            self.i_train += 1
+            if self.i_train >= len(self.train): self.i_train = 0
+        else: 
+            price = torch.as_tensor(self.test['close'][self.i_test], dtype=torch.float32).to('cuda')
+            self.i_test += 1
+            if self.i_test >= len(self.test): self.i_test = 0
+
+        self.price = price
+        price.requires_grad = True
+        old_value = self.get_value(price)
+
+        self.cash -= price * amount
+        self.stocks += amount
+
+        new_value = self.get_value(price)
+
+        # maximize profit (reward)
+        change = new_value - old_value
+        change = -change
+        
+        if track:
+            self.portfolio_history['cash'].append(self.cash)
+            self.portfolio_history['stocks'].append(self.stocks)
+            self.portfolio_history['total'].append(self.cash + self.stocks * price)
+            self.portfolio_history['action'].append(['sell', 'hold', 'buy'][amount + 1])
+        
+        loss = torch.as_tensor(change, dtype=torch.float32).to('cuda')
+        loss = torch.functional.F.softmax(loss, dim=0)
+        return loss
+
+
+    def get_value(self, price):
+        return self.cash + self.stocks * price
+
+    def get_stock_history(self, ticker):
+        self.train = load_file(f'data/Stock/{ticker}.parquet')
+        self.test = load_file(f'data/Stock/{ticker}.parquet')
+        self.train['date'] = self.train['date'].apply(lambda x: arrow.get(str(x)[:10]).format('YYYY-MM-DD') if len(str(x)) > 7 else None).dropna()
+        self.test['date'] = self.test['date'].apply(lambda x: arrow.get(str(x)[:10]).format('YYYY-MM-DD') if len(str(x)) > 7 else None).dropna()
 
 def emotion_classifier_load(MODEL='cardiffnlp/twitter-xlm-roberta-base-sentiment', vector_size=120, max_epocks=10, early_stopping=True, patience=500, print_every=500, device='cuda') -> nn.Module:
     """Loads the emotion classifier model and trains it if it does not exist
