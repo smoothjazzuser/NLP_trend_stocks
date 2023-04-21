@@ -503,6 +503,7 @@ class model(nn.Module):
         self.dense = nn.LazyLinear(5)
 
         self.cash = cash
+        _ = self.action(torch.as_tensor([0], dtype=torch.float32).to('cuda'))
         self.stocks = 0
         self.stock_ticker_symbol = ticker
         self.i_train = 0
@@ -510,21 +511,23 @@ class model(nn.Module):
         self.get_stock_history(ticker)
 
     def forward(self, x):
-        """forward pass"""
+        """forward pass. Here we take the resnet model and add a head for the RL agent to learn from. This forward pass will then output the action taken and the pred_price for price.
+        
+        """
         portfolio = torch.as_tensor([self.cash, self.stocks, self.price * self.stocks], dtype=torch.float32).unsqueeze(0).to('cuda')
-        out = self.resnet(x)
+        pred_price = self.resnet(x)
         
         # flatten out1 and portfolio
         
         dense_portfolio = self.dense_portfolio(portfolio)
-        out1 = torch.squeeze(out, 0)
+        out1 = torch.squeeze(pred_price, 0)
         dense_portfolio = torch.squeeze(dense_portfolio, 0)
 
         dense_resnet = self.dense_resnet(out1)
         dense = torch.cat((dense_portfolio, dense_resnet))
         outcat2 = torch.concat((dense, out1))
-        out2 = self.rl_head(outcat2)
-        return out.permute(1,0).to('cuda'), out2.to('cuda')
+        action = self.rl_head(outcat2)
+        return pred_price.permute(1,0).to('cuda'), action.to('cuda')
 
     def action(self, amount, train=True, track=False):
         """actions are either 0, 1, or -1"""
@@ -542,6 +545,13 @@ class model(nn.Module):
         self.price = price
         price.requires_grad = True
         old_value = self.get_value(price)
+
+        if amount > 0.33:
+            amount = 1
+        elif amount < -0.33:
+            amount = -1
+        else:
+            amount = 0
 
         self.cash -= price * amount
         self.stocks += amount
