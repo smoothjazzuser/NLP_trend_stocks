@@ -503,7 +503,8 @@ class model(nn.Module):
         self.dense = nn.LazyLinear(5)
 
         self.cash = cash
-        _ = self.action(torch.as_tensor([0], dtype=torch.float32).to('cuda'))
+        #self.action(torch.as_tensor([0], dtype=torch.float32).to('cuda'))
+        self.price = 0
         self.stocks = 0
         self.stock_ticker_symbol = ticker
         self.i_train = 0
